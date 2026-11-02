@@ -53,7 +53,7 @@ it's a fast-as-fuck terminal music player written in Rust. no ads, no telemetry,
 ## how to build & run
 
 ```bash
-git clone https://github.com/yourusername/mfe-player.git
+git clone https://github.com/omkargs/mfe-player.git
 cd mfe-player
 cargo build --release
 install -Dm755 target/release/mfe-player ~/.local/bin/mfe-player

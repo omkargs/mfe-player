@@ -1,0 +1,255 @@
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+pub fn config_dir() -> PathBuf {
+    dirs_config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("mfe-player")
+}
+
+fn dirs_config_dir() -> Option<PathBuf> {
+    if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
+        if !xdg.trim().is_empty() {
+            return Some(PathBuf::from(xdg));
+        }
+    }
+    env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
+}
+
+pub fn plugins_dir() -> PathBuf {
+    config_dir().join("plugins")
+}
+
+pub fn state_path() -> PathBuf {
+    config_dir().join("state.json")
+}
+
+pub fn config_path() -> PathBuf {
+    config_dir().join("config.toml")
+}
+
+pub fn mpv_log_path() -> PathBuf {
+    config_dir().join("mpv.log")
+}
+
+pub fn cache_dir() -> PathBuf {
+    if let Ok(xdg) = env::var("XDG_CACHE_HOME") {
+        if !xdg.trim().is_empty() {
+            return PathBuf::from(xdg).join("mfe-player");
+        }
+    }
+    env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".cache").join("mfe-player"))
+        .unwrap_or_else(|| PathBuf::from(".cache").join("mfe-player"))
+}
+
+pub fn downloads_dir() -> PathBuf {
+    cache_dir().join("downloads")
+}
+
+pub fn runtime_dir() -> PathBuf {
+    if let Ok(xdg) = env::var("XDG_RUNTIME_DIR") {
+        if !xdg.trim().is_empty() {
+            return PathBuf::from(xdg).join("mfe-player");
+        }
+    }
+    let user = env::var("USER").unwrap_or_else(|_| "user".to_string());
+    env::temp_dir().join(format!("mfe-player-{user}"))
+}
+
+pub fn mpv_socket_path() -> PathBuf {
+    runtime_dir().join("mpv.sock")
+}
+
+/// Records which TUI session owns the shared mpv instance. A second,
+/// concurrently running session must not hijack it, so it gets its own
+/// private socket instead.
+pub fn session_lock_path() -> PathBuf {
+    runtime_dir().join("session.pid")
+}
+
+pub fn private_mpv_socket_path(pid: u32) -> PathBuf {
+    runtime_dir().join(format!("mpv-{pid}.sock"))
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_seek() -> f64 {
+    5.0
+}
+
+fn default_long_seek() -> f64 {
+    30.0
+}
+
+fn default_volume_step() -> f64 {
+    5.0
+}
+
+fn default_theme() -> String {
+    "nuclear".to_string()
+}
+
+fn default_view() -> String {
+    "search".to_string()
+}
+
+fn default_cava_position() -> String {
+    "right".to_string()
+}
+
+fn default_cava_bars() -> u16 {
+    28
+}
+
+fn default_eq() -> String {
+    "flat".to_string()
+}
+
+/// User-editable settings, loaded from `~/.config/mfe-player/config.toml`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppConfig {
+    pub theme: String,
+    pub seek_step: f64,
+    pub long_seek_step: f64,
+    pub volume_step: f64,
+    pub default_view: String,
+    pub prefetch: bool,
+    pub radio: bool,
+    pub mouse: bool,
+    pub cava: bool,
+    pub cava_position: String,
+    pub cava_bars: u16,
+    pub normalize: bool,
+    pub eq: String,
+    pub audio_device: String,
+    pub mpris: bool,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_theme(),
+            seek_step: default_seek(),
+            long_seek_step: default_long_seek(),
+            volume_step: default_volume_step(),
+            default_view: default_view(),
+            prefetch: default_true(),
+            radio: false,
+            mouse: default_true(),
+            cava: default_true(),
+            cava_position: default_cava_position(),
+            cava_bars: default_cava_bars(),
+            normalize: false,
+            eq: default_eq(),
+            audio_device: String::new(),
+            mpris: default_true(),
+        }
+    }
+}
+
+const DEFAULT_CONFIG: &str = r#"# mfe-player configuration
+# Edit and restart the app. Every key is optional.
+
+# Colour theme: nuclear | gruvbox | nord | mono | matrix | rose
+theme = "nuclear"
+
+# Playback steps (seconds / percent).
+seek_step = 5
+long_seek_step = 30
+volume_step = 5
+
+# View shown at startup: search | queue | favorites | playlists | downloads | plugins
+default_view = "search"
+
+# Resolve the next track while the current one plays (no silence between songs).
+prefetch = true
+
+# When the queue ends, keep playing related tracks (Spotify-style radio).
+radio = false
+
+# Mouse: wheel scrolls, click selects, double-click plays, click the progress bar to seek.
+mouse = true
+
+# Spectrum visualiser (needs `cava` installed).
+cava = true
+cava_position = "right"   # right | left
+cava_bars = 28
+
+# Audio polish.
+normalize = false          # loudness normalisation via mpv dynaudnorm
+eq = "flat"                # flat | bass | vocal | night | loud
+audio_device = ""          # empty = system default (e.g. "alsa/hdmi:CARD=HDMI")
+
+# Desktop media keys / playerctl integration.
+mpris = true
+"#;
+
+pub fn load_config() -> (AppConfig, Option<String>) {
+    let path = config_path();
+    if !path.exists() {
+        let _ = fs::write(&path, DEFAULT_CONFIG);
+        return (AppConfig::default(), None);
+    }
+    match fs::read_to_string(&path) {
+        Ok(raw) => match toml::from_str::<AppConfig>(&raw) {
+            Ok(mut config) => {
+                config.seek_step = config.seek_step.clamp(1.0, 600.0);
+                config.long_seek_step = config.long_seek_step.clamp(1.0, 600.0);
+                config.volume_step = config.volume_step.clamp(1.0, 50.0);
+                config.cava_bars = config.cava_bars.clamp(4, 96);
+                (config, None)
+            }
+            Err(err) => (
+                AppConfig::default(),
+                Some(format!("config.toml is invalid, using defaults: {err}")),
+            ),
+        },
+        Err(err) => (
+            AppConfig::default(),
+            Some(format!("could not read config.toml: {err}")),
+        ),
+    }
+}
+
+/// Rewrite just the `theme` line so user comments in config.toml survive.
+pub fn set_theme_in_file(name: &str) {
+    let path = config_path();
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return;
+    };
+    let mut replaced = false;
+    let mut out = String::new();
+    for line in raw.lines() {
+        if !replaced && line.trim_start().starts_with("theme") && line.contains('=') {
+            out.push_str(&format!("theme = \"{name}\"\n"));
+            replaced = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !replaced {
+        out.push_str(&format!("theme = \"{name}\"\n"));
+    }
+    let _ = fs::write(path, out);
+}
+
+pub fn ensure_dirs() -> Result<()> {
+    fs::create_dir_all(config_dir())
+        .with_context(|| format!("creating {}", config_dir().display()))?;
+    fs::create_dir_all(plugins_dir())
+        .with_context(|| format!("creating {}", plugins_dir().display()))?;
+    fs::create_dir_all(runtime_dir())
+        .with_context(|| format!("creating {}", runtime_dir().display()))?;
+    fs::create_dir_all(downloads_dir())
+        .with_context(|| format!("creating {}", downloads_dir().display()))?;
+    Ok(())
+}

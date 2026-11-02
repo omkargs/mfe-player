@@ -1,6 +1,6 @@
-# 🎧 mfe-player (Music For Everyone)
+# mfe-player 🎧
 
-> **Escape subscription hell.** Own your music, your workflow, and your terminal.
+> **fuck subscriptions. own your music.**
 
 ```
 ┌ library ──────┐ ┌ ⌕ search · iTunes Search ────────────────────┐ ┌ inspect ───────┐
@@ -12,76 +12,46 @@
 └───────────────┘ └─────────────────────────────────────────────┘ └────────────────┘
 │ ▶ Get Lucky  Daft Punk                        2:13 / 4:08   vol 70%  repeat off │
 └ / search · Enter play · a queue · F favorite · P playlist · y lyrics · ? help ┘
+---
 ```
 
----
+## wtf is this?
 
-## 💀 The Problem: Subscription Hell & Bloatware
+look. i got sick of paying fifteen bucks a month just to rent music while dealing with bloated electron apps eating gigabytes of ram, ads interrupting my coding flow, and getting logged out of random web players. 
 
-Let's be real. You're a developer. You want to listen to music while you hack, write code, or read logs. But what are your options?
-- **Streaming monopolies**: $11–$17/month just to rent compressed audio, suffer algorithm fatigue, endless UI redesigns, telemetry, and ads.
-- **Bloated Electron apps**: Spotify desktop client eating 1.5 GB of RAM just to render a web app that lags when you type.
-- **Web players**: Getting logged out, browser tab suspended, memory leaks, and zero terminal integration.
+so i built **mfe-player** (Music For Everyone). 
 
-You live in the terminal. Your tools are fast, deterministic, lightweight, and yours. Your music player should be too.
+it's a fast-as-fuck terminal music player written in Rust. no ads, no telemetry, no subscription garbage. it gives you Spotify-level search and playback inside an fzf-style TUI that lives right where you already work.
 
 ---
 
-## ✨ Enter `mfe-player`
+## why use it instead of the usual garbage?
 
-**mfe-player** (Music For Everyone) is a lightning-fast, plugin-driven fzf-style TUI music streaming powerhouse built in **Rust** (`ratatui` + `crossterm`) with **Python stdlib plugins**, **persistent mpv**, and absolute zero corporate telemetry.
-
-No subscription walls. No ads. No bloat. Just pure audio speed.
-
----
-
-## 🚀 Killer Features
-
-### 🔍 1. Smart Multi-Section Search & Context Autoplay
-- One query searches **artists**, **albums**, and **songs** simultaneously.
-- Debounced (260ms), cached, and lightning-fast.
-- Pressing `Enter` on a track anywhere queues the rest of its context (album, artist top tracks, playlist) and keeps playing seamlessly.
-
-### 🌊 2. Streaming Handoff & Bulletproof Resilience
-- Powered by installable Python plugins (`yt-dlp`, SoundCloud, YouTube, MusicBrainz, iTunes, LRC Lib).
-- Every stream URL is range-probed in parallel before touching `mpv`.
-- If a provider goes down or serves a dead link, `mfe-player` automatically fails over down the line so your music never skips a beat.
-
-### 🎛️ 3. The Cava Spectrum Panel & 6 Live Themes
-- Real-time `cava` visualizer panel sitting on the right (wide) or left sidebar (narrow), toggled instantly with `Ctrl+V`.
-- Cycle through 6 gorgeous themes live (`nuclear`, `gruvbox`, `nord`, `mono`, `matrix`, `rose`) with `Alt+T` — your config file comments are preserved untouched.
-
-### 📻 4. Radio Autoplay & Prefetch
-- Toggle radio autoplay with `Ctrl+T`. When your queue ends, `mfe-player` automatically generates a smart radio station based on the active artist and keeps the vibe going.
-- Background prefetching caches the next track while you listen for instant zero-latency track switching and gapless playback (`--gapless-audio=yes`).
-
-### 📥 5. Offline Downloads & Link Importing (`Ctrl+L`)
-- Press `d` to rip and save tracks offline into `~/.cache/mfe-player/downloads/` as Opus files with full JSON metadata sidecars. Offline copies are automatically prioritized over streaming.
-- Press `Ctrl+L` to import single tracks, full YouTube/SoundCloud playlists, or remote `.m3u` files instantly.
-
-### 🕹️ 6. MPRIS, Media Keys & Background Detach (`Ctrl+B`)
-- Full MPRIS server integration (`org.mfeplayer.MfePlayer`) out of the box — control playback with your keyboard media keys or `playerctl`.
-- Detach the TUI with `Ctrl+B`: `mpv` keeps streaming in the background even if you close your terminal. Reattach anytime, or run multiple independent sessions.
-
-### 🛡️ 7. Power Tools & Undo Stack (`Alt+U`)
-- Multi-select items (`v` mark single, `V` mark all) for bulk queueing, playlist addition, or downloading.
-- Accidentally deleted something? Hit `Alt+U` to pop it right back from the undo stack.
-- Export and import your playlists to standard M3U files (`Alt+E` / `Alt+I`).
+- **zero ram hogging**: runs on Rust + ratatui. uses practically nothing.
+- **plugin-driven**: python stdlib plugins fetch metadata, streams, and lyrics without bloat. if one provider breaks, it auto-fails over to the next.
+- **cava visualizer (`Ctrl+V`)**: real-time audio spectrum bars that actually look sick in your terminal.
+- **offline downloads (`d`)**: hit `d` and it saves the track locally as Opus with full metadata so you can listen offline.
+- **paste links (`Ctrl+L`)**: got a YouTube link, SoundCloud track, playlist, or remote `.m3u`? Paste it in and it just plays.
+- **background detach (`Ctrl+B`)**: hit `Ctrl+B` and detach the TUI. mpv keeps blasting music in the background even if you close your terminal window.
+- **mpris & media keys**: works out of the box with `playerctl` and your keyboard media keys.
+- **6 color themes (`Alt+T`)**: gruvbox, nord, matrix, rose, mono, and nuclear. cycles live without wiping your config comments.
 
 ---
 
-## 🛠️ Installation
+## what you need
 
-### Prerequisites
-- **Linux** (mpv IPC uses Unix sockets)
-- **Rust 1.85+** (`rustc`, `cargo`)
-- **`mpv`** (audio playback engine)
-- **`yt-dlp`** (for streaming and downloads)
-- **`python3`** (standard library only, for plugins)
-- **`cava`** (optional, for the spectrum visualiser)
-- **`playerctl`** (optional, for media keys)
+- Linux (mpv IPC runs on unix sockets)
+- Rust 1.85+
+- `mpv` (for audio playback)
+- `yt-dlp` (for streaming & ripping downloads)
+- `python3` (standard library only)
+- `cava` (optional, for the visualizer)
+- `playerctl` (optional, for media keys)
 
-### Build & Install
+---
+
+## how to build & run
+
 ```bash
 git clone https://github.com/yourusername/mfe-player.git
 cd mfe-player
@@ -89,51 +59,48 @@ cargo build --release
 install -Dm755 target/release/mfe-player ~/.local/bin/mfe-player
 ```
 
+run it:
+```bash
+mfe-player
+# or search straight from the terminal
+mfe-player daft punk
+```
+
 ---
 
-## ⌨️ Essential Hotkeys
+## hotkeys (memorize these)
 
-| Key | Action |
+| Key | What it does |
 |---|---|
-| `/` or `Ctrl+F` | Filter list / live search |
-| `Enter` | Play track / open artist or album page |
-| `Space` | Play / Pause |
-| `n` / `p` | Next / Previous track |
-| `+` / `-` | Volume up / down (`m` to mute) |
-| `s` | Toggle shuffle |
-| `r` | Toggle repeat |
-| `f` / `F` | Toggle favorite / add to favorites |
-| `d` | Download track for offline playback |
-| `Ctrl+L` | Import track or playlist from URL |
-| `Ctrl+T` | Toggle radio autoplay |
-| `Ctrl+V` | Toggle Cava audio spectrum panel |
-| `Alt+T` | Cycle color themes live |
-| `Alt+U` | Undo last deletion |
-| `Alt+E` / `Alt+I` | Export / Import playlists (M3U) |
-| `z` | Sleep timer |
-| `E` | Cycle EQ presets (flat, bass, vocal, night, loud) |
-| `Alt+N` | Toggle loudness normalisation |
-| `Ctrl+B` | Detach TUI (keep playing in background) |
-| `Ctrl+P` / `:` | fzf-style command palette |
-| `?` | Toggle help overlay |
-| `q` | Quit |
+| `/` or `Ctrl+F` | search / filter list |
+| `Enter` | play track / open artist or album |
+| `Space` | play / pause |
+| `n` / `p` | next / prev track |
+| `+` / `-` | volume up / down (`m` to mute) |
+| `f` / `F` | favorite track |
+| `d` | download track offline |
+| `Ctrl+L` | import song or playlist from link |
+| `Ctrl+T` | radio autoplay (never stops playing) |
+| `Ctrl+V` | toggle cava spectrum visualizer |
+| `Alt+T` | cycle color themes live |
+| `Alt+U` | undo last delete |
+| `Alt+E` / `Alt+I` | export / import M3U playlists |
+| `z` | sleep timer |
+| `E` | cycle EQ presets |
+| `Alt+N` | toggle loudness normalization |
+| `Ctrl+B` | detach TUI (keep music playing in bg) |
+| `Ctrl+P` or `:` | command palette |
+| `?` | help menu |
+| `q` | quit |
 
 ---
 
-## ⚙️ Configuration & Files
+## config & files
 
-On first launch, `mfe-player` automatically sets up its default plugins and configuration:
+first run sets up everything cleanly:
+- Config: `~/.config/mfe-player/config.toml`
+- State: `~/.config/mfe-player/state.json`
+- Plugins: `~/.config/mfe-player/plugins/`
+- Downloads: `~/.cache/mfe-player/downloads/`
 
-- **Config**: `~/.config/mfe-player/config.toml`
-- **State & Session**: `~/.config/mfe-player/state.json`
-- **Plugins**: `~/.config/mfe-player/plugins/`
-- **Offline Downloads**: `~/.cache/mfe-player/downloads/`
-- **M3U Export**: `~/.config/mfe-player/mfe-player.m3u`
-
----
-
-## 🤝 Contributing & License
-
-Built by developers, for developers. PRs, bug reports, and new plugins are welcome! 
-
-Licensed under the MIT License.
+mit license. fork it, break it, fix it.

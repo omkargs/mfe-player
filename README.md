@@ -163,7 +163,7 @@ That's also why `repeat one` and radio now survive in the background instead of 
 
 `Alt+T` cycles live and writes the choice back to `config.toml` **without deleting your comments**.
 
-`nuclear` · `gruvbox` · `nord` · `mono` · `matrix` · `rose` · `catppuccin` · `dracula` · `tokyo-night` · `solarized` · `amber` · `ocean`
+`mfe` · `gruvbox` · `nord` · `mono` · `matrix` · `rose` · `catppuccin` · `dracula` · `tokyo-night` · `solarized` · `amber` · `ocean`
 
 Set one permanently:
 
@@ -216,7 +216,7 @@ If one provider rate-limits you, MFE fails over to the next plugin instead of sh
 `~/.config/mfe-player/config.toml` — every key is optional.
 
 ```toml
-theme = "nuclear"
+theme = "mfe"
 seek_step = 5
 long_seek_step = 30
 volume_step = 5

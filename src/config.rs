@@ -153,7 +153,7 @@ fn default_volume_step() -> f64 {
 }
 
 fn default_theme() -> String {
-    "nuclear".to_string()
+    "mfe".to_string()
 }
 
 fn default_view() -> String {
@@ -218,9 +218,9 @@ impl Default for AppConfig {
 const DEFAULT_CONFIG: &str = r#"# mfe-player configuration
 # Edit and restart the app. Every key is optional.
 
-# Colour theme: nuclear | gruvbox | nord | mono | matrix | rose |
+# Colour theme: mfe | gruvbox | nord | mono | matrix | rose |
 #               catppuccin | dracula | tokyo-night | solarized | amber | ocean
-theme = "nuclear"
+theme = "mfe"
 
 # Playback steps (seconds / percent).
 seek_step = 5

@@ -56,17 +56,17 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "NUCLEAR",
+            "MFE",
             Style::default().fg(th().fg).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            " TUI",
+            " PLAYER",
             Style::default()
                 .fg(th().accent2)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "   streaming, not hosting",
+            "   music for everyone",
             Style::default().fg(th().dim).add_modifier(Modifier::ITALIC),
         ),
     ]);

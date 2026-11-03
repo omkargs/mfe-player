@@ -21,7 +21,7 @@ pub struct Theme {
     pub purple: Color,
 }
 
-const NUCLEAR: Theme = Theme {
+const MFE: Theme = Theme {
     bg: Color::Rgb(10, 12, 17),
     panel: Color::Rgb(16, 19, 27),
     panel2: Color::Rgb(21, 25, 36),
@@ -213,10 +213,10 @@ const OCEAN: Theme = Theme {
     purple: Color::Rgb(150, 170, 255),
 };
 
-static CURRENT: RwLock<Theme> = RwLock::new(NUCLEAR);
+static CURRENT: RwLock<Theme> = RwLock::new(MFE);
 
 pub const THEME_NAMES: &[&str] = &[
-    "nuclear",
+    "mfe",
     "gruvbox",
     "nord",
     "mono",
@@ -232,7 +232,7 @@ pub const THEME_NAMES: &[&str] = &[
 
 fn preset(name: &str) -> Option<Theme> {
     match name.trim().to_ascii_lowercase().as_str() {
-        "nuclear" | "pink" | "default" => Some(NUCLEAR),
+        "mfe" | "nuclear" | "pink" | "default" => Some(MFE),
         "gruvbox" | "warm" => Some(GRUVBOX),
         "nord" | "arctic" => Some(NORD),
         "mono" | "monochrome" | "gray" | "grey" => Some(MONO),
@@ -261,15 +261,40 @@ pub fn set_theme(name: &str) -> bool {
 }
 
 pub fn get() -> Theme {
-    CURRENT.read().map(|theme| *theme).unwrap_or(NUCLEAR)
+    CURRENT.read().map(|theme| *theme).unwrap_or(MFE)
 }
 
-/// Resolve a configured theme name, falling back to `nuclear`.
+/// Map old aliases (including the pre-rename `nuclear` theme) onto the
+/// canonical name shown in the UI.
+pub fn canonical_name(name: &str) -> Option<&'static str> {
+    let name = name.trim().to_ascii_lowercase();
+    Some(match name.as_str() {
+        "mfe" | "nuclear" | "pink" | "default" => "mfe",
+        "gruvbox" | "warm" => "gruvbox",
+        "nord" | "arctic" => "nord",
+        "mono" | "monochrome" | "gray" | "grey" => "mono",
+        "matrix" | "green" => "matrix",
+        "rose" | "plum" => "rose",
+        "catppuccin" | "mocha" | "catppuccin-mocha" => "catppuccin",
+        "dracula" => "dracula",
+        "tokyo-night" | "tokyonight" | "tokyo" => "tokyo-night",
+        "solarized" | "solarized-dark" | "solar" => "solarized",
+        "amber" | "retro" | "terminal" => "amber",
+        "ocean" | "deep" | "abyss" => "ocean",
+        _ => return None,
+    })
+}
+
+/// Resolve a configured theme name, falling back to `mfe`.
 pub fn apply_configured(name: &str) -> String {
-    if set_theme(name) {
-        name.trim().to_ascii_lowercase()
-    } else {
-        set_theme("nuclear");
-        "nuclear".to_string()
+    match canonical_name(name) {
+        Some(canonical) => {
+            set_theme(canonical);
+            canonical.to_string()
+        }
+        None => {
+            set_theme("mfe");
+            "mfe".to_string()
+        }
     }
 }

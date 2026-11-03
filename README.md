@@ -159,6 +159,41 @@ That's also why `repeat one` and radio now survive in the background instead of 
 
 ---
 
+## 🧩 Status bars & scripts
+
+`mfe` speaks JSON, so it drops straight into waybar, polybar, tmux or a shell prompt.
+
+```bash
+mfe status --json
+```
+
+```json
+{"text":"▶ Get Lucky — Daft Punk","class":"playing","title":"Get Lucky","artist":"Daft Punk","position":73.2,"duration":248,"paused":false,"repeat":"all","shuffle":false,"mode":"daemon","connected":true}
+```
+
+Waybar module:
+
+```json
+"custom/mfe": {
+  "exec": "mfe status --json",
+  "return-type": "json",
+  "interval": 1,
+  "format": "{}",
+  "on-click": "mfe toggle",
+  "on-click-right": "mfe stop"
+}
+```
+
+One-liners:
+
+```bash
+mfe current                 # ▶ Get Lucky — Daft Punk
+mfe toggle                  # pause/resume
+mfe completions bash        # also: zsh, fish
+```
+
+---
+
 ## 🎨 Themes
 
 `Alt+T` cycles live and writes the choice back to `config.toml` **without deleting your comments**.

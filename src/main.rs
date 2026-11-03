@@ -40,7 +40,23 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Some("status") => {
-            println!("{}", daemon::status_line());
+            if raw_args.iter().any(|arg| arg == "--json") {
+                println!("{}", serde_json::to_string(&daemon::status_json())?);
+            } else {
+                println!("{}", daemon::status_line());
+            }
+            return Ok(());
+        }
+        Some("current") => {
+            println!(
+                "{}",
+                daemon::status_json()["text"].as_str().unwrap_or("idle")
+            );
+            return Ok(());
+        }
+        Some("completions") => {
+            let shell = raw_args.get(1).map(String::as_str).unwrap_or("bash");
+            print!("{}", completions(shell));
             return Ok(());
         }
         _ => {}
@@ -89,6 +105,58 @@ enum CliAction {
     Exit,
 }
 
+fn completions(shell: &str) -> String {
+    match shell {
+        "fish" => {
+            r#"# mfe-player fish completions
+complete -c mfe -f -a "status toggle stop current completions" -d "MFE Player"
+complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
+complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
+"#
+        }
+        "zsh" => {
+            r#"#compdef mfe mfe-player
+_mfe() {
+  local -a commands
+  commands=(
+    'status:show what is playing'
+    'current:one-line now playing'
+    'toggle:play/pause the background player'
+    'stop:stop playback and the daemon'
+    'completions:print shell completions'
+  )
+  _arguments -C \
+    '1:command:->cmds' \
+    '*::arg:->args'
+  case $state in
+    cmds) _describe 'command' commands ;;
+  esac
+}
+_mfe "$@"
+"#
+        }
+        _ => {
+            r#"# mfe-player bash completions
+_mfe_player() {
+  local cur prev
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  if [ "$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "status current toggle stop completions" -- "$cur") )
+  elif [ "$prev" = "completions" ]; then
+    COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
+  elif [ "$prev" = "status" ]; then
+    COMPREPLY=( $(compgen -W "--json" -- "$cur") )
+  fi
+}
+complete -F _mfe_player mfe mfe-player
+"#
+        }
+    }
+    .to_string()
+}
+
 fn cli_action() -> CliAction {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {
@@ -103,8 +171,11 @@ fn cli_action() -> CliAction {
                mfe-player                 open the TUI\n\
                mfe-player daft punk       open the TUI with search results\n\
                mfe-player status          what is playing right now?\n\
+               mfe-player status --json   waybar/polybar/tmux friendly JSON\n\
+               mfe-player current         one-line now playing\n\
                mfe-player toggle          play/pause the background player\n\
-               mfe-player stop            stop playback and the daemon\n\n\
+               mfe-player stop            stop playback and the daemon\n\
+               mfe-player completions bash|zsh|fish\n\n\
              First run installs default plugins into ~/.config/mfe-player/plugins.\n\
              Config: ~/.config/mfe-player/config.toml (themes, steps, cava, ...).\n\
              Press ? inside the app for the full keymap.\n\n\

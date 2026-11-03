@@ -8,7 +8,7 @@
 //! killed, SSH can drop, the laptop lid can close — the music keeps going.
 
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -176,6 +176,121 @@ pub fn mpv_command(command: serde_json::Value) -> Result<()> {
     writeln!(stream, "{}", json!({ "command": command }))?;
     stream.flush()?;
     Ok(())
+}
+
+/// Ask mpv for a single property and wait for the reply. Used by the CLI
+/// integrations (waybar, polybar, tmux) where the state file can be a second
+/// behind the actual playback position.
+pub fn mpv_property(name: &str) -> Option<serde_json::Value> {
+    let mut stream = UnixStream::connect(config::mpv_socket_path()).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .ok()?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(500)))
+        .ok()?;
+    writeln!(
+        stream,
+        "{}",
+        json!({ "command": ["get_property", name], "request_id": 4242 })
+    )
+    .ok()?;
+    stream.flush().ok()?;
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => return None,
+            Ok(_) => {
+                let value: serde_json::Value = serde_json::from_str(&line).ok()?;
+                if value.get("request_id").and_then(|id| id.as_u64()) == Some(4242) {
+                    return value.get("data").cloned();
+                }
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// Machine-readable snapshot for status bars and scripts.
+pub fn status_json() -> serde_json::Value {
+    let state = crate::state::PersistedState::load().0;
+    let title = state
+        .now_playing
+        .as_ref()
+        .map(|track| track.title.clone())
+        .unwrap_or_else(|| "nothing playing".to_string());
+    let artist = state
+        .now_playing
+        .as_ref()
+        .map(|track| track.artist.clone())
+        .unwrap_or_default();
+    let album = state
+        .now_playing
+        .as_ref()
+        .map(|track| track.album.clone())
+        .unwrap_or_default();
+
+    let connected = mpv_property("idle-active").is_some();
+    let paused = mpv_property("pause")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let position = mpv_property("time-pos")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(state.position);
+    let duration = mpv_property("duration")
+        .and_then(|v| v.as_f64())
+        .unwrap_or_else(|| {
+            state
+                .now_playing
+                .as_ref()
+                .and_then(|track| track.duration)
+                .map(|d| d as f64)
+                .unwrap_or(0.0)
+        });
+    let mode = if is_running() {
+        "daemon"
+    } else if connected {
+        "session"
+    } else {
+        "stopped"
+    };
+    let playing = connected && !paused && duration > 0.0
+        || connected && !paused && title != "nothing playing";
+    let icon = if !connected {
+        "■"
+    } else if paused {
+        "⏸"
+    } else {
+        "▶"
+    };
+    let text = if title == "nothing playing" {
+        format!("{icon} idle")
+    } else if artist.is_empty() {
+        format!("{icon} {title}")
+    } else {
+        format!("{icon} {title} — {artist}")
+    };
+
+    json!({
+        "text": text,
+        "alt": if !connected { "stopped" } else if paused { "paused" } else { "playing" },
+        "tooltip": format!("{title}\n{artist}\n{album}\nmode: {mode} · repeat: {}", state.repeat),
+        "class": if !connected { "stopped" } else if paused { "paused" } else { "playing" },
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "position": position,
+        "duration": duration,
+        "paused": paused,
+        "playing": playing,
+        "repeat": state.repeat,
+        "shuffle": state.shuffle,
+        "volume": state.volume,
+        "mode": mode,
+        "connected": connected
+    })
 }
 
 pub fn stop_everything() -> Result<()> {

@@ -241,12 +241,24 @@ impl AudioEngine {
         Ok(())
     }
 
+    /// Playback speed (0.5×–2.0×). Great for podcasts and 10-hour mixes.
+    pub fn set_speed(&self, speed: f64) -> Result<()> {
+        self.command(json!(["set_property", "speed", speed.clamp(0.25, 4.0)]))?;
+        Ok(())
+    }
+
     pub fn stop(&self) -> Result<()> {
         self.command(json!(["stop"]))?;
         Ok(())
     }
 
     pub fn detach(&mut self) {
+        self.detached = true;
+    }
+
+    /// Hand the player over without stopping it. Used by the headless daemon
+    /// when a TUI takes control back: mpv must keep playing across the handoff.
+    pub fn release(&mut self) {
         self.detached = true;
     }
 
@@ -346,7 +358,7 @@ fn spawn_mpv(socket_path: &Path, volume: f64, audio_device: &str) -> Result<Chil
         .arg("--cache=yes")
         .arg("--prefetch-playlist=yes")
         .arg("--gapless-audio=yes")
-        .arg("--audio-client-name=Nuclear TUI")
+        .arg("--audio-client-name=mfe-player")
         .arg(format!("--volume={}", volume.clamp(0.0, 130.0)))
         .arg(format!("--input-ipc-server={}", socket_path.display()))
         .stdin(Stdio::null())

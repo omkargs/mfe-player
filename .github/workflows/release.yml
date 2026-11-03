@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          mkdir -p dist/mfe-player
+          cp target/release/mfe-player dist/mfe-player/
+          cp README.md LICENSE dist/mfe-player/
+          tar -C dist -czf mfe-player-linux-x86_64.tar.gz mfe-player
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: mfe-player-linux-x86_64.tar.gz
+          generate_release_notes: true

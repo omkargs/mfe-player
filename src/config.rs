@@ -11,6 +11,57 @@ pub fn config_dir() -> PathBuf {
         .join("mfe-player")
 }
 
+fn legacy_config_dir() -> PathBuf {
+    dirs_config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("nuclear-tui")
+}
+
+fn legacy_cache_dir() -> PathBuf {
+    if let Ok(xdg) = env::var("XDG_CACHE_HOME") {
+        if !xdg.trim().is_empty() {
+            return PathBuf::from(xdg).join("nuclear-tui");
+        }
+    }
+    env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".cache").join("nuclear-tui"))
+        .unwrap_or_else(|| PathBuf::from(".cache").join("nuclear-tui"))
+}
+
+/// Move an old nuclear-tui install over to the mfe-player paths so nobody
+/// loses their queue, playlists, downloads or hand-written config in the
+/// rename. Safe to call on every launch.
+pub fn migrate_legacy() {
+    let new = config_dir();
+    let old = legacy_config_dir();
+    if !new.exists() && old.is_dir() {
+        if fs::rename(&old, &new).is_err() {
+            let _ = copy_dir(&old, &new);
+        }
+    }
+    let new_cache = cache_dir();
+    let old_cache = legacy_cache_dir();
+    if !new_cache.exists() && old_cache.is_dir() {
+        if fs::rename(&old_cache, &new_cache).is_err() {
+            let _ = copy_dir(&old_cache, &new_cache);
+        }
+    }
+}
+
+fn copy_dir(from: &PathBuf, to: &PathBuf) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 fn dirs_config_dir() -> Option<PathBuf> {
     if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
         if !xdg.trim().is_empty() {
@@ -70,6 +121,15 @@ pub fn mpv_socket_path() -> PathBuf {
 /// private socket instead.
 pub fn session_lock_path() -> PathBuf {
     runtime_dir().join("session.pid")
+}
+
+/// PID of the headless background player, when one is running.
+pub fn daemon_pid_path() -> PathBuf {
+    runtime_dir().join("daemon.pid")
+}
+
+pub fn daemon_log_path() -> PathBuf {
+    config_dir().join("daemon.log")
 }
 
 pub fn private_mpv_socket_path(pid: u32) -> PathBuf {
@@ -158,7 +218,8 @@ impl Default for AppConfig {
 const DEFAULT_CONFIG: &str = r#"# mfe-player configuration
 # Edit and restart the app. Every key is optional.
 
-# Colour theme: nuclear | gruvbox | nord | mono | matrix | rose
+# Colour theme: nuclear | gruvbox | nord | mono | matrix | rose |
+#               catppuccin | dracula | tokyo-night | solarized | amber | ocean
 theme = "nuclear"
 
 # Playback steps (seconds / percent).

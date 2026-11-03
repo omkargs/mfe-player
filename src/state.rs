@@ -10,6 +10,10 @@ fn default_volume() -> f64 {
     70.0
 }
 
+fn default_speed() -> f64 {
+    1.0
+}
+
 fn default_repeat() -> String {
     "off".to_string()
 }
@@ -24,6 +28,7 @@ pub struct PersistedState {
     pub now_index: Option<usize>,
     pub position: f64,
     pub volume: f64,
+    pub speed: f64,
     pub shuffle: bool,
     pub repeat: String,
     pub active_metadata: Option<String>,
@@ -45,6 +50,7 @@ impl Default for PersistedState {
             now_index: None,
             position: 0.0,
             volume: default_volume(),
+            speed: default_speed(),
             shuffle: false,
             repeat: default_repeat(),
             active_metadata: None,
@@ -68,6 +74,9 @@ impl PersistedState {
             Ok(raw) => match serde_json::from_str::<Self>(&raw) {
                 Ok(mut state) => {
                     state.volume = state.volume.clamp(0.0, 130.0);
+                    if !(0.25..=4.0).contains(&state.speed) {
+                        state.speed = 1.0;
+                    }
                     (state, None)
                 }
                 Err(err) => (

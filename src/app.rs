@@ -657,6 +657,9 @@ pub struct App {
     pub audio_error: Option<String>,
     pub volume: f64,
     last_volume: f64,
+    pub speed: f64,
+    /// True while the sleep timer is ramping the volume down.
+    sleep_fading: bool,
     pub shuffle: bool,
     pub repeat: RepeatMode,
     pub status: String,
@@ -691,10 +694,23 @@ pub struct App {
 
 impl App {
     pub fn new(config: AppConfig) -> Result<Self> {
+        Self::build(config, false)
+    }
+
+    /// Build the app without any UI-only side effects (no cava subprocess) and
+    /// without stealing the player from the daemon that launched us.
+    pub fn new_headless(config: AppConfig) -> Result<Self> {
+        Self::build(config, true)
+    }
+
+    fn build(config: AppConfig, headless: bool) -> Result<Self> {
         config::ensure_dirs()?;
+        if !headless {
+            crate::daemon::takeover();
+        }
         let theme_name = theme::apply_configured(&config.theme);
         let cava_enabled = config.cava;
-        let cava = cava_enabled.then(|| Cava::spawn(config.cava_bars));
+        let cava = (!headless && cava_enabled).then(|| Cava::spawn(config.cava_bars));
         let downloads = load_downloads();
         let mpris = config.mpris.then(Mpris::start);
         let (persisted, state_warning) = PersistedState::load();
@@ -836,6 +852,8 @@ impl App {
             audio_error,
             volume,
             last_volume: if volume > 0.0 { volume } else { 70.0 },
+            speed: persisted.speed,
+            sleep_fading: false,
             shuffle: persisted.shuffle,
             repeat,
             status,
@@ -878,6 +896,9 @@ impl App {
             app.flash("another session owns audio · this session uses its own player".to_string());
         }
         app.apply_audio_filters();
+        if let Some(audio) = app.audio.as_ref() {
+            let _ = audio.set_speed(app.speed);
+        }
         if let Some(err) = app.cava.as_ref().and_then(Cava::error) {
             app.flash(err.to_string());
         }
@@ -1061,6 +1082,9 @@ impl App {
             KeyCode::Char('+') | KeyCode::Char('=') => self.change_volume(self.config.volume_step),
             KeyCode::Char('-') | KeyCode::Char('_') => self.change_volume(-self.config.volume_step),
             KeyCode::Char('m') => self.toggle_mute(),
+            KeyCode::Char('[') => self.change_speed(-0.1),
+            KeyCode::Char(']') => self.change_speed(0.1),
+            KeyCode::Char('\\') => self.reset_speed(),
             KeyCode::Char('z') => self.open_sleep_timer(),
             KeyCode::Char('E') => self.cycle_eq(),
             KeyCode::Char('v') => self.toggle_mark(),
@@ -1974,14 +1998,37 @@ impl App {
         let SleepMode::At(deadline) = self.sleep else {
             return;
         };
-        if Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if !remaining.is_zero() {
+            // Fade the last 15 seconds so the music drifts off instead of
+            // getting guillotined mid-chorus.
+            const FADE: f64 = 15.0;
+            let secs = remaining.as_secs_f64();
+            if secs <= FADE {
+                let factor = (secs / FADE).clamp(0.0, 1.0);
+                if let Some(audio) = self.audio.as_ref() {
+                    let _ = audio.set_volume(self.volume * factor);
+                }
+                self.sleep_fading = true;
+            }
             return;
         }
         self.sleep = SleepMode::Off;
+        self.restore_sleep_volume();
         if let Some(audio) = self.audio.as_ref() {
             let _ = audio.set_pause(true);
         }
-        self.flash("sleep timer — playback paused");
+        self.flash("sleep timer — faded out and paused");
+    }
+
+    fn restore_sleep_volume(&mut self) {
+        if !self.sleep_fading {
+            return;
+        }
+        self.sleep_fading = false;
+        if let Some(audio) = self.audio.as_ref() {
+            let _ = audio.set_volume(self.volume);
+        }
     }
 
     pub fn sleep_label(&self) -> Option<String> {
@@ -2020,6 +2067,7 @@ impl App {
         let Some((label, minutes)) = SLEEP_OPTIONS.get(selected).copied() else {
             return;
         };
+        self.restore_sleep_volume();
         self.sleep = if minutes == 0 {
             SleepMode::Off
         } else if minutes == u32::MAX {
@@ -2689,7 +2737,7 @@ impl App {
                 ));
                 out.push('\n');
                 if let Ok(json) = serde_json::to_string(track) {
-                    out.push_str(&format!("#NUCLEAR:{json}\n"));
+                    out.push_str(&format!("#MFE:{json}\n"));
                 }
             }
         }
@@ -2726,10 +2774,13 @@ impl App {
                     name: name.to_string(),
                     tracks: Vec::new(),
                 });
-            } else if let Some(json) = line.strip_prefix("#NUCLEAR:") {
+            } else if let Some(json) = line
+                .strip_prefix("#MFE:")
+                .or_else(|| line.strip_prefix("#NUCLEAR:"))
+            {
                 if let Ok(track) = serde_json::from_str::<Track>(json) {
                     if let Some(playlist) = current.as_mut() {
-                        // The readable title line before #NUCLEAR created a
+                        // The readable title line before #MFE created a
                         // placeholder. Upgrade it in place instead of adding a
                         // second copy of the same song.
                         let replace_placeholder = playlist.tracks.last().is_some_and(|last| {
@@ -3450,6 +3501,7 @@ impl App {
         self.playback_failures = 0;
         if self.sleep == SleepMode::EndOfTrack {
             self.sleep = SleepMode::Off;
+            self.restore_sleep_volume();
             // Line up the next track so pressing Space later starts there
             // instead of replaying the song the timer just ended.
             let next = self.now_index.and_then(|index| {
@@ -3616,6 +3668,28 @@ impl App {
             }
         }
         self.status = format!("volume {:.0}%", self.volume);
+        self.mark_dirty();
+    }
+
+    fn change_speed(&mut self, delta: f64) {
+        let speed = ((self.speed + delta) * 10.0).round() / 10.0;
+        self.speed = speed.clamp(0.5, 2.0);
+        if let Some(audio) = self.audio.as_ref() {
+            if let Err(err) = audio.set_speed(self.speed) {
+                self.flash(format!("speed failed: {err}"));
+                return;
+            }
+        }
+        self.status = format!("speed {:.1}×", self.speed);
+        self.mark_dirty();
+    }
+
+    fn reset_speed(&mut self) {
+        self.speed = 1.0;
+        if let Some(audio) = self.audio.as_ref() {
+            let _ = audio.set_speed(self.speed);
+        }
+        self.status = "speed 1.0×".to_string();
         self.mark_dirty();
     }
 
@@ -4606,13 +4680,40 @@ impl App {
     }
 
     fn detach_background(&mut self) {
-        if let Some(audio) = self.audio.as_mut() {
-            audio.detach();
+        if self.audio.is_some() {
+            if let Err(err) = crate::daemon::spawn_background() {
+                self.flash(format!("could not start background player: {err}"));
+                return;
+            }
+            if let Some(audio) = self.audio.as_mut() {
+                audio.detach();
+            }
             self.detached_on_quit = true;
             self.should_quit = true;
             self.persist();
         } else {
             self.flash("audio engine is not running");
+        }
+    }
+
+    /// Called by the headless daemon once it has attached to mpv: if the last
+    /// track ended during the handoff, pick the queue back up instead of
+    /// sitting there looking busy.
+    pub fn daemon_resume_if_idle(&mut self) {
+        let idle = self
+            .audio
+            .as_ref()
+            .map(|audio| audio.snapshot().idle)
+            .unwrap_or(false);
+        if idle && !self.queue.is_empty() {
+            self.resume_queue();
+        }
+    }
+
+    /// Hand mpv over to a new TUI without killing the music.
+    pub fn release_audio(&mut self) {
+        if let Some(audio) = self.audio.as_mut() {
+            audio.release();
         }
     }
 
@@ -5062,6 +5163,7 @@ impl App {
             now_index: self.now_index,
             position: self.audio_snapshot().position,
             volume: self.volume,
+            speed: self.speed,
             shuffle: self.shuffle,
             repeat: match self.repeat {
                 RepeatMode::Off => "off".to_string(),
@@ -5086,9 +5188,10 @@ impl App {
             .map(|audio| audio.socket_path().display().to_string())
             .unwrap_or_else(|| config::mpv_socket_path().display().to_string());
         format!(
-            "Playing in the background.\n\
+            "Playing in the background — queue, repeat, shuffle and radio keep running.\n\
              Run `mfe-player` again to reattach.\n\
-             Stop it with: pkill -f 'audio-client-name=Nuclear TUI'\n\
+             Pause/resume with: mfe-player toggle\n\
+             Stop it with: mfe-player stop\n\
              (mpv IPC socket: {socket})"
         )
     }
@@ -5505,7 +5608,10 @@ fn import_remote_m3u(url: &str) -> std::result::Result<LinkImport, String> {
                 };
                 pending = Some((artist, title));
             }
-        } else if let Some(json) = line.strip_prefix("#NUCLEAR:") {
+        } else if let Some(json) = line
+            .strip_prefix("#MFE:")
+            .or_else(|| line.strip_prefix("#NUCLEAR:"))
+        {
             if let Ok(track) = serde_json::from_str::<Track>(json) {
                 let replace_placeholder = tracks.last().is_some_and(|last| {
                     last.id.starts_with("imported:")

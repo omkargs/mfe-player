@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod cava;
 mod config;
+mod daemon;
 mod models;
 mod mpris;
 mod plugins;
@@ -23,6 +24,27 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 fn main() -> Result<()> {
+    config::migrate_legacy();
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    if raw_args.iter().any(|arg| arg == "--daemon") {
+        return daemon::run();
+    }
+    match raw_args.first().map(String::as_str) {
+        Some("stop") => {
+            daemon::stop_everything()?;
+            println!("mfe-player: stopped");
+            return Ok(());
+        }
+        Some("toggle") => {
+            daemon::toggle_pause()?;
+            return Ok(());
+        }
+        Some("status") => {
+            println!("{}", daemon::status_line());
+            return Ok(());
+        }
+        _ => {}
+    }
     let initial_query = match cli_action() {
         CliAction::Exit => return Ok(()),
         CliAction::Run(query) => query,
@@ -79,7 +101,10 @@ fn cli_action() -> CliAction {
              A plugin-driven music streaming player for the terminal.\n\n\
              Usage: mfe-player [query]\n\
                mfe-player                 open the TUI\n\
-               mfe-player daft punk       open the TUI with search results\n\n\
+               mfe-player daft punk       open the TUI with search results\n\
+               mfe-player status          what is playing right now?\n\
+               mfe-player toggle          play/pause the background player\n\
+               mfe-player stop            stop playback and the daemon\n\n\
              First run installs default plugins into ~/.config/mfe-player/plugins.\n\
              Config: ~/.config/mfe-player/config.toml (themes, steps, cava, ...).\n\
              Press ? inside the app for the full keymap.\n\n\
@@ -91,7 +116,7 @@ fn cli_action() -> CliAction {
                Shift+←/→ seek −30s / +30s\n\
                y        lyrics\n\
                Ctrl+P   fzf-style command palette\n\
-               Ctrl+B   quit the TUI and keep playing in the background\n\
+               Ctrl+B   quit the TUI, keep playing (repeat + queue keep running)\n\
                q        quit and stop audio",
             env!("CARGO_PKG_VERSION")
         );

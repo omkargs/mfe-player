@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nuclear TUI streaming plugin: YouTube via yt-dlp.
+"""MFE Player streaming plugin: YouTube via yt-dlp.
 
 Resolves a track to one or more direct audio URLs. The URL is validated with a
 tiny ranged request and comes with the HTTP headers yt-dlp negotiated, so mpv

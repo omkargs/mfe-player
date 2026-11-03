@@ -1760,11 +1760,15 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("← / →", "seek -5s / +5s"),
         key("Shift+← / →", "seek -30s / +30s"),
         key("+ / - · m", "volume up / down · mute"),
+        key("[ / ] · \\", "speed down / up · reset to 1×"),
         key("s · r", "shuffle · cycle repeat"),
-        key("z", "sleep timer (15–90 min or end of track)"),
+        key("z", "sleep timer (15–90 min or end of track, fades out)"),
         key("y", "lyrics overlay (synced when available)"),
         key("R", "reload / retry (page, search, plugins)"),
-        key("q / Ctrl+B", "quit & stop / quit & keep playing"),
+        key(
+            "q / Ctrl+B",
+            "quit & stop / quit & keep playing (queue+repeat continue)",
+        ),
     ];
     let right = vec![
         section("SMART SEARCH"),

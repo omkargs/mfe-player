@@ -117,9 +117,118 @@ const ROSE: Theme = Theme {
     purple: Color::Rgb(200, 150, 255),
 };
 
+const CATPPUCCIN: Theme = Theme {
+    bg: Color::Rgb(30, 30, 46),
+    panel: Color::Rgb(24, 24, 37),
+    panel2: Color::Rgb(49, 50, 68),
+    border: Color::Rgb(69, 71, 90),
+    fg: Color::Rgb(205, 214, 244),
+    dim: Color::Rgb(166, 173, 200),
+    faint: Color::Rgb(108, 112, 134),
+    accent: Color::Rgb(245, 194, 231),
+    accent2: Color::Rgb(137, 220, 235),
+    green: Color::Rgb(166, 227, 161),
+    yellow: Color::Rgb(249, 226, 175),
+    red: Color::Rgb(243, 139, 168),
+    purple: Color::Rgb(203, 166, 247),
+};
+
+const DRACULA: Theme = Theme {
+    bg: Color::Rgb(40, 42, 54),
+    panel: Color::Rgb(33, 34, 44),
+    panel2: Color::Rgb(68, 71, 90),
+    border: Color::Rgb(98, 114, 164),
+    fg: Color::Rgb(248, 248, 242),
+    dim: Color::Rgb(189, 147, 249),
+    faint: Color::Rgb(98, 114, 164),
+    accent: Color::Rgb(255, 121, 198),
+    accent2: Color::Rgb(139, 233, 253),
+    green: Color::Rgb(80, 250, 123),
+    yellow: Color::Rgb(241, 250, 140),
+    red: Color::Rgb(255, 85, 85),
+    purple: Color::Rgb(189, 147, 249),
+};
+
+const TOKYO_NIGHT: Theme = Theme {
+    bg: Color::Rgb(26, 27, 38),
+    panel: Color::Rgb(22, 22, 30),
+    panel2: Color::Rgb(36, 40, 59),
+    border: Color::Rgb(65, 72, 104),
+    fg: Color::Rgb(192, 202, 245),
+    dim: Color::Rgb(122, 162, 247),
+    faint: Color::Rgb(86, 95, 137),
+    accent: Color::Rgb(187, 154, 247),
+    accent2: Color::Rgb(125, 207, 255),
+    green: Color::Rgb(158, 206, 106),
+    yellow: Color::Rgb(224, 175, 104),
+    red: Color::Rgb(247, 118, 142),
+    purple: Color::Rgb(187, 154, 247),
+};
+
+const SOLARIZED: Theme = Theme {
+    bg: Color::Rgb(0, 43, 54),
+    panel: Color::Rgb(7, 54, 66),
+    panel2: Color::Rgb(88, 110, 117),
+    border: Color::Rgb(101, 123, 131),
+    fg: Color::Rgb(253, 246, 227),
+    dim: Color::Rgb(147, 161, 161),
+    faint: Color::Rgb(101, 123, 131),
+    accent: Color::Rgb(38, 139, 210),
+    accent2: Color::Rgb(42, 161, 152),
+    green: Color::Rgb(133, 153, 0),
+    yellow: Color::Rgb(181, 137, 0),
+    red: Color::Rgb(220, 50, 47),
+    purple: Color::Rgb(108, 113, 196),
+};
+
+const AMBER: Theme = Theme {
+    bg: Color::Rgb(18, 12, 4),
+    panel: Color::Rgb(28, 20, 7),
+    panel2: Color::Rgb(38, 28, 10),
+    border: Color::Rgb(92, 66, 20),
+    fg: Color::Rgb(255, 219, 153),
+    dim: Color::Rgb(196, 148, 66),
+    faint: Color::Rgb(126, 92, 35),
+    accent: Color::Rgb(255, 176, 0),
+    accent2: Color::Rgb(255, 214, 102),
+    green: Color::Rgb(186, 230, 126),
+    yellow: Color::Rgb(255, 214, 102),
+    red: Color::Rgb(255, 130, 92),
+    purple: Color::Rgb(230, 168, 255),
+};
+
+const OCEAN: Theme = Theme {
+    bg: Color::Rgb(8, 18, 30),
+    panel: Color::Rgb(12, 26, 42),
+    panel2: Color::Rgb(17, 36, 58),
+    border: Color::Rgb(38, 70, 105),
+    fg: Color::Rgb(210, 238, 255),
+    dim: Color::Rgb(118, 167, 205),
+    faint: Color::Rgb(72, 110, 145),
+    accent: Color::Rgb(0, 200, 255),
+    accent2: Color::Rgb(0, 255, 200),
+    green: Color::Rgb(100, 235, 180),
+    yellow: Color::Rgb(255, 220, 130),
+    red: Color::Rgb(255, 120, 140),
+    purple: Color::Rgb(150, 170, 255),
+};
+
 static CURRENT: RwLock<Theme> = RwLock::new(NUCLEAR);
 
-pub const THEME_NAMES: &[&str] = &["nuclear", "gruvbox", "nord", "mono", "matrix", "rose"];
+pub const THEME_NAMES: &[&str] = &[
+    "nuclear",
+    "gruvbox",
+    "nord",
+    "mono",
+    "matrix",
+    "rose",
+    "catppuccin",
+    "dracula",
+    "tokyo-night",
+    "solarized",
+    "amber",
+    "ocean",
+];
 
 fn preset(name: &str) -> Option<Theme> {
     match name.trim().to_ascii_lowercase().as_str() {
@@ -129,6 +238,12 @@ fn preset(name: &str) -> Option<Theme> {
         "mono" | "monochrome" | "gray" | "grey" => Some(MONO),
         "matrix" | "green" => Some(MATRIX),
         "rose" | "plum" => Some(ROSE),
+        "catppuccin" | "mocha" | "catppuccin-mocha" => Some(CATPPUCCIN),
+        "dracula" => Some(DRACULA),
+        "tokyo-night" | "tokyonight" | "tokyo" => Some(TOKYO_NIGHT),
+        "solarized" | "solarized-dark" | "solar" => Some(SOLARIZED),
+        "amber" | "retro" | "terminal" => Some(AMBER),
+        "ocean" | "deep" | "abyss" => Some(OCEAN),
         _ => None,
     }
 }

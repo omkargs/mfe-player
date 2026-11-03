@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nuclear TUI metadata plugin: MusicBrainz.
+"""MFE Player metadata plugin: MusicBrainz.
 
 Protocol:
     main.py search <query>     -> unified artists/albums/tracks
@@ -11,7 +11,7 @@ import sys
 import urllib.parse
 import urllib.request
 
-UA = "MfePlayer/0.2 (https://github.com/mfe-player)"
+UA = "MFEPlayer/0.2 (https://github.com/omkargs/mfe-player)"
 API = "https://musicbrainz.org/ws/2"
 
 

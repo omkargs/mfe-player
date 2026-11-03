@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nuclear TUI lyrics plugin: LRCLIB with lyrics.ovh fallback.
+"""MFE Player lyrics plugin: LRCLIB with lyrics.ovh fallback.
 
 Protocol:
     main.py fetch '<track-json>'
@@ -11,7 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-UA = "MfePlayer/0.1 (https://github.com/mfe-player)"
+UA = "MFEPlayer/0.1 (https://github.com/omkargs/mfe-player)"
 
 
 def fail(message):

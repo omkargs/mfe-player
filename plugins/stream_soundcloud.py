@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nuclear TUI streaming plugin: SoundCloud via yt-dlp.
+"""MFE Player streaming plugin: SoundCloud via yt-dlp.
 
 Returns the direct media URL plus a backup and the HTTP headers negotiated by
 yt-dlp, with a small ranged probe to reject dead URLs before handing them to

@@ -1,9 +1,13 @@
 [package]
 name = "mfe-player"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "A plugin-driven, terminal-native music streaming player"
+description = "Music For Everyone — a plugin-driven, terminal-native music player that tells subscriptions to get lost"
 license = "MIT"
+repository = "https://github.com/omkargs/mfe-player"
+homepage = "https://github.com/omkargs/mfe-player"
+keywords = ["music", "tui", "terminal", "streaming", "mpv"]
+categories = ["command-line-utilities", "multimedia"]
 
 [dependencies]
 anyhow = "1"

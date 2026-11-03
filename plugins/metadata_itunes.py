@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nuclear TUI metadata plugin: Apple iTunes Search API.
+"""MFE Player metadata plugin: Apple iTunes Search API.
 
 Protocol:
     main.py search <query>     -> unified artists/albums/tracks
@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-UA = "mfe-player/0.2 (+https://github.com/mfe-player)"
+UA = "mfe-player/0.2 (+https://github.com/omkargs/mfe-player)"
 API = "https://itunes.apple.com"
 
 

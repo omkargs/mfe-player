@@ -517,6 +517,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "mfe-player"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "crossterm 0.29.0",
+ "futures-lite",
+ "fuzzy-matcher",
+ "libc",
+ "mpris-server",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "toml",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
 name = "mio"
 version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -539,24 +557,6 @@ dependencies = [
  "serde",
  "trait-variant",
  "zbus",
-]
-
-[[package]]
-name = "mfe-player"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "crossterm 0.29.0",
- "futures-lite",
- "fuzzy-matcher",
- "libc",
- "mpris-server",
- "ratatui",
- "serde",
- "serde_json",
- "toml",
- "unicode-width 0.2.0",
 ]
 
 [[package]]

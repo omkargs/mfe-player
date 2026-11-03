@@ -70,8 +70,8 @@ impl Mpris {
 
 fn run_server(commands: Sender<Command>, updates: AsyncReceiver<Update>) {
     zbus::block_on(async move {
-        let player = match Player::builder("org.nucleartui.NuclearTui")
-            .identity("Nuclear TUI")
+        let player = match Player::builder("org.mfeplayer.MfePlayer")
+            .identity("Mfe Player")
             .desktop_entry("mfe-player")
             .can_quit(true)
             .can_raise(false)
@@ -156,7 +156,7 @@ fn run_server(commands: Sender<Command>, updates: AsyncReceiver<Update>) {
                     PlaybackStatus::Playing
                 };
                 let _ = player.set_playback_status(status).await;
-                let track_id = TrackId::try_from("/org/nucleartui/NuclearTui/track").ok();
+                let track_id = TrackId::try_from("/org/mfeplayer/MfePlayer/track").ok();
                 let mut metadata = Metadata::builder()
                     .title(if update.title.is_empty() {
                         "Nothing playing".to_string()

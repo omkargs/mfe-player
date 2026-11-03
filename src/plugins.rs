@@ -347,7 +347,7 @@ pub fn run_plugin(plugin: &InstalledPlugin, args: &[String], timeout: Duration) 
     command
         .args(args)
         .current_dir(&plugin.dir)
-        .env("NUCLEAR_TUI", "1")
+        .env("MFE_PLAYER", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

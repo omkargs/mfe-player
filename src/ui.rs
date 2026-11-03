@@ -1648,6 +1648,15 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
         if app.radio { "on" } else { "off" }.to_string(),
     ));
     lines.push(info_line(
+        "scrobble",
+        if app.scrobbling() {
+            "listenbrainz"
+        } else {
+            "off"
+        }
+        .to_string(),
+    ));
+    lines.push(info_line(
         "cava",
         if app.cava_enabled { "on" } else { "off" }.to_string(),
     ));

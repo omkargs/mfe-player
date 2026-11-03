@@ -201,6 +201,8 @@ pub struct AppConfig {
     pub mpris: bool,
     /// Folders scanned for local audio (FLAC/MP3/Opus/...). `~` is expanded.
     pub library_paths: Vec<String>,
+    /// ListenBrainz user token. Empty disables scrobbling entirely.
+    pub listenbrainz_token: String,
 }
 
 impl Default for AppConfig {
@@ -222,6 +224,7 @@ impl Default for AppConfig {
             audio_device: String::new(),
             mpris: default_true(),
             library_paths: Vec::new(),
+            listenbrainz_token: String::new(),
         }
     }
 }
@@ -266,6 +269,11 @@ mpris = true
 # Local music folders (FLAC, MP3, Opus, Ogg, M4A...). Scanned on launch.
 # Example: library_paths = ["~/Music", "/mnt/archive/albums"]
 library_paths = []
+
+# Optional: scrobble to ListenBrainz (https://listenbrainz.org/profile/).
+# Paste your user token here and every play is submitted from a background
+# thread. Leave empty to keep everything local.
+listenbrainz_token = ""
 "#;
 
 pub fn load_config() -> (AppConfig, Option<String>) {

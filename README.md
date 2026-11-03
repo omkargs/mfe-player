@@ -286,6 +286,8 @@ library_paths = ["~/Music"]   # scanned on launch; press R in the library view t
 | `~/.cache/mfe-player/artwork/` | downloaded and embedded cover cache |
 | `~/.config/mfe-player/mfe-player.m3u` | exported playlists |
 
+Want scrobbles without handing over a social graph? Paste a ListenBrainz user token into `listenbrainz_token` in the config. Plays are submitted from a background thread; if the token is empty, nothing leaves your machine.
+
 ---
 
 ## 🗺 Roadmap

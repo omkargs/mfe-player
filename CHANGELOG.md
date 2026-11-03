@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **CLI integration:** `mfe status --json` for waybar/polybar/tmux, `mfe
+  current`, and bash/zsh/fish completions.
+- **Listening history & stats:** every play is recorded in a History view (`7`);
+  `Ctrl+G` shows plays, listening time and top artists/tracks.
+- **Truecolor album art:** covers render as half-blocks in the inspector in any
+  modern terminal, cached locally.
+- **Local library:** scan `library_paths`, read tags and embedded covers with
+  `lofty`, browse with `8`, filter with `/`, rescan with `R`.
+- **Share now playing:** `Y` or `mfe share` copies a one-line track description
+  to the clipboard via wl-copy/xclip/xsel/pbcopy.
+- **ListenBrainz scrobbling:** optional token in the config submits now-playing
+  and listens from a background thread.
+
 ## v0.2.0 — Music For Everyone
 
 The rename release. `nuclear-tui` is now **mfe-player**. Old configs are migrated

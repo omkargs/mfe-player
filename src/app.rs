@@ -21,6 +21,7 @@ use crate::models::{
 };
 use crate::mpris::{self, Mpris};
 use crate::plugins::{run_plugin, InstalledPlugin, PluginKind, PluginRegistry};
+use crate::social::Scrobbler;
 use crate::state::{HistoryEntry, PersistedState};
 use crate::theme;
 
@@ -750,6 +751,7 @@ pub struct App {
     pub artwork_track_id: Option<String>,
     artwork_url: Option<String>,
     pub spinner: usize,
+    scrobbler: Scrobbler,
     recent_queries: Vec<String>,
     dirty_since: Option<Instant>,
 }
@@ -845,6 +847,7 @@ impl App {
         let cfg_radio = config.radio;
         let cfg_prefetch = config.prefetch;
         let cfg_mouse = config.mouse;
+        let listenbrainz_token = config.listenbrainz_token.clone();
         let initial_view = match config.default_view.to_ascii_lowercase().as_str() {
             "queue" => View::Queue,
             "favorites" => View::Favorites,
@@ -950,6 +953,7 @@ impl App {
             artwork_track_id: None,
             artwork_url: None,
             spinner: 0,
+            scrobbler: Scrobbler::new(listenbrainz_token),
             recent_queries: persisted.recent_queries,
             dirty_since: None,
         };
@@ -996,6 +1000,10 @@ impl App {
         self.poll_mpris();
         self.check_sleep_timer();
         self.maybe_prime_radio();
+        if let Some(track) = self.now_playing.clone() {
+            let position = self.audio_snapshot().position;
+            self.scrobbler.tick(&track, position);
+        }
 
         let ended = self
             .audio
@@ -5086,6 +5094,10 @@ impl App {
             View::History => self.history_selected = self.history.len().saturating_sub(1),
             View::Library => self.library_selected = self.library.len().saturating_sub(1),
         }
+    }
+
+    pub fn scrobbling(&self) -> bool {
+        self.scrobbler.enabled()
     }
 
     pub fn selected_track(&self) -> Option<Track> {

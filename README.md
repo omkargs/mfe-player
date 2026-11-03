@@ -51,6 +51,7 @@ This is **MFE Player** — **M**usic **F**or **E**veryone.
 | **Sleep timer** | `z` fades out over the last 15 seconds and pauses. No mid-chorus guillotine. |
 | **Playback speed** | `[` / `]` for 0.5×–2.0×, `\` to reset. Podcasts, mixes and 10-hour loops welcome. |
 | **M3U import/export** | `Alt+E` / `Alt+I` so your playlists can escape this app too. |
+| **History & stats** | Every play is remembered (`7`). `Ctrl+G` shows listening time, top artists and most-played tracks. |
 
 ---
 
@@ -128,7 +129,8 @@ Press `?` inside the app for the full, searchable map. The ones you'll actually 
 | `S` | Save queue as a playlist |
 | `Alt+K` · `Alt+U` | Clear upcoming · undo last removal |
 | `Alt+E` · `Alt+I` | Export · import M3U |
-| `d` · `6` | Download · downloads view |
+| `d` · `5` | Download · downloads view |
+| `7` · `Ctrl+G` | Listening history · listening stats |
 | `Ctrl+L` | Import song/playlist from a link |
 | `Ctrl+T` | Toggle radio autoplay |
 | `Ctrl+V` | Toggle cava spectrum |

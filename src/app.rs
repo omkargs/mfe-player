@@ -19,7 +19,7 @@ use crate::models::{
 };
 use crate::mpris::{self, Mpris};
 use crate::plugins::{run_plugin, InstalledPlugin, PluginKind, PluginRegistry};
-use crate::state::PersistedState;
+use crate::state::{HistoryEntry, PersistedState};
 use crate::theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,17 +30,19 @@ pub enum View {
     Playlists,
     Downloads,
     Plugins,
+    History,
     Browse,
 }
 
 impl View {
-    pub const ALL: [View; 6] = [
+    pub const ALL: [View; 7] = [
         View::Search,
         View::Queue,
         View::Favorites,
         View::Playlists,
         View::Downloads,
         View::Plugins,
+        View::History,
     ];
 
     pub fn title(self) -> &'static str {
@@ -51,6 +53,7 @@ impl View {
             Self::Playlists => "playlists",
             Self::Downloads => "downloads",
             Self::Plugins => "plugin store",
+            Self::History => "history",
             Self::Browse => "browse",
         }
     }
@@ -63,6 +66,7 @@ impl View {
             Self::Playlists => "▤",
             Self::Downloads => "⤓",
             Self::Plugins => "⚙",
+            Self::History => "◷",
             Self::Browse => "◉",
         }
     }
@@ -251,6 +255,7 @@ pub enum Overlay {
     ImportLink {
         input: String,
     },
+    Stats,
     Lyrics(Box<LyricsOverlay>),
 }
 
@@ -279,6 +284,8 @@ pub enum PaletteAction {
     ViewPlaylists,
     ViewDownloads,
     ViewPlugins,
+    ViewHistory,
+    ShowStats,
     GoBack,
     PlayNext,
     RenamePlaylist,
@@ -420,7 +427,7 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
     },
     PaletteItem {
         label: "Go to plugin store",
-        hint: "5",
+        hint: "6",
         action: PaletteAction::ViewPlugins,
     },
     PaletteItem {
@@ -495,8 +502,18 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
     },
     PaletteItem {
         label: "Go to downloads",
-        hint: "6",
+        hint: "5",
         action: PaletteAction::ViewDownloads,
+    },
+    PaletteItem {
+        label: "Go to listening history",
+        hint: "7",
+        action: PaletteAction::ViewHistory,
+    },
+    PaletteItem {
+        label: "Listening stats",
+        hint: "Ctrl+G",
+        action: PaletteAction::ShowStats,
     },
     PaletteItem {
         label: "Toggle radio autoplay",
@@ -619,6 +636,8 @@ pub struct App {
     pub queue_selected: usize,
     pub favorites: Vec<Track>,
     pub favorites_selected: usize,
+    pub history: Vec<HistoryEntry>,
+    pub history_selected: usize,
     pub playlists: Vec<Playlist>,
     pub playlist_selected: usize,
     pub downloads: HashMap<String, (Track, PathBuf)>,
@@ -810,6 +829,8 @@ impl App {
             queue_selected: restored_index,
             favorites: persisted.favorites,
             favorites_selected: 0,
+            history: persisted.history,
+            history_selected: 0,
             playlists: persisted.playlists,
             playlist_selected: 0,
             downloads,
@@ -1008,6 +1029,10 @@ impl App {
                     self.toggle_radio();
                     return;
                 }
+                KeyCode::Char('g') => {
+                    self.overlay = Some(Overlay::Stats);
+                    return;
+                }
                 KeyCode::Char('v') => {
                     self.toggle_cava();
                     return;
@@ -1059,11 +1084,15 @@ impl App {
                 return;
             }
             KeyCode::Char('5') => {
-                self.switch_view(View::Plugins);
+                self.switch_view(View::Downloads);
                 return;
             }
             KeyCode::Char('6') => {
-                self.switch_view(View::Downloads);
+                self.switch_view(View::Plugins);
+                return;
+            }
+            KeyCode::Char('7') => {
+                self.switch_view(View::History);
                 return;
             }
             _ => {}
@@ -1287,8 +1316,8 @@ impl App {
             return;
         };
         match overlay {
-            Overlay::Help => {
-                // Any key dismisses help.
+            Overlay::Help | Overlay::Stats => {
+                // Any key dismisses help / stats.
             }
             Overlay::Confirm { message, action } => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
@@ -2952,6 +2981,7 @@ impl App {
             }
             View::Downloads => self.downloads_selected = index,
             View::Plugins => self.plugin_selected = index,
+            View::History => self.history_selected = index,
             View::Browse => {
                 if let Some(page) = self.browse_stack.last_mut() {
                     page.selected = index;
@@ -3266,6 +3296,25 @@ impl App {
         self.start_stream(track);
     }
 
+    fn record_history(&mut self, track: &Track) {
+        let now = unix_secs();
+        if let Some(last) = self.history.first() {
+            if last.track.id == track.id && now.saturating_sub(last.played_at) < 5 {
+                return;
+            }
+        }
+        self.history.insert(
+            0,
+            HistoryEntry {
+                track: track.clone(),
+                played_at: now,
+            },
+        );
+        self.history.truncate(500);
+        self.history_selected = 0;
+        self.mark_dirty();
+    }
+
     fn start_stream(&mut self, track: Track) {
         self.start_stream_with(track, false);
     }
@@ -3320,6 +3369,7 @@ impl App {
         if self.audio.is_none() {
             return;
         }
+        self.record_history(&track);
         // Offline copies always win: they are instant and immune to CDN 403s.
         if let Some(path) = self.download_path(&track.id).cloned() {
             if path.exists() {
@@ -3775,6 +3825,13 @@ impl App {
         self.mark_dirty();
     }
 
+    pub fn history_tracks(&self) -> Vec<Track> {
+        self.history
+            .iter()
+            .map(|entry| entry.track.clone())
+            .collect()
+    }
+
     pub fn current_view_tracks(&self) -> Vec<Track> {
         match self.view {
             View::Search => self.search_results.tracks.clone(),
@@ -3792,6 +3849,7 @@ impl App {
                 .unwrap_or_default(),
             View::Downloads => self.download_tracks(),
             View::Plugins => Vec::new(),
+            View::History => self.history_tracks(),
         }
     }
 
@@ -3964,6 +4022,13 @@ impl App {
                 let tracks = self.download_tracks();
                 if let Some(track) = tracks.get(self.downloads_selected).cloned() {
                     self.play_with_context(track, tracks);
+                }
+            }
+            View::History => {
+                if let Some(entry) = self.history.get(self.history_selected) {
+                    let track = entry.track.clone();
+                    let context = self.history_tracks();
+                    self.play_with_context(track, context);
                 }
             }
             View::Plugins => self.toggle_selected_plugin(),
@@ -4424,6 +4489,10 @@ impl App {
                 self.open_command_palette();
                 return;
             }
+            View::History => {
+                self.flash("history is already newest-first — use j/k");
+                return;
+            }
             View::Browse => {
                 self.flash("go back to search to filter results");
                 return;
@@ -4529,6 +4598,8 @@ impl App {
             PaletteAction::ViewPlaylists => self.switch_view(View::Playlists),
             PaletteAction::ViewDownloads => self.switch_view(View::Downloads),
             PaletteAction::ViewPlugins => self.switch_view(View::Plugins),
+            PaletteAction::ViewHistory => self.switch_view(View::History),
+            PaletteAction::ShowStats => self.overlay = Some(Overlay::Stats),
             PaletteAction::NewPlaylist => {
                 self.pending_playlist_tracks.clear();
                 self.overlay = Some(Overlay::NewPlaylist {
@@ -4787,6 +4858,10 @@ impl App {
                 self.plugin_selected =
                     step_index(self.plugin_selected, delta, self.plugin_entries().len());
             }
+            View::History => {
+                self.history_selected =
+                    step_index(self.history_selected, delta, self.history.len());
+            }
         }
     }
 
@@ -4809,6 +4884,7 @@ impl App {
             }
             View::Downloads => self.downloads_selected = 0,
             View::Plugins => self.plugin_selected = 0,
+            View::History => self.history_selected = 0,
         }
     }
 
@@ -4837,6 +4913,7 @@ impl App {
                 self.downloads_selected = self.download_tracks().len().saturating_sub(1)
             }
             View::Plugins => self.plugin_selected = self.plugin_entries().len().saturating_sub(1),
+            View::History => self.history_selected = self.history.len().saturating_sub(1),
         }
     }
 
@@ -4879,6 +4956,10 @@ impl App {
                 .and_then(|playlist| playlist.tracks.get(self.playlist_track_selected))
                 .cloned(),
             View::Downloads => self.download_tracks().get(self.downloads_selected).cloned(),
+            View::History => self
+                .history
+                .get(self.history_selected)
+                .map(|entry| entry.track.clone()),
             View::Plugins => None,
         }
     }
@@ -5093,6 +5174,9 @@ impl App {
         self.downloads_selected = self
             .downloads_selected
             .min(self.download_tracks().len().saturating_sub(1));
+        self.history_selected = self
+            .history_selected
+            .min(self.history.len().saturating_sub(1));
         self.plugin_selected = self
             .plugin_selected
             .min(self.plugin_entries().len().saturating_sub(1));
@@ -5177,6 +5261,7 @@ impl App {
             radio: self.radio,
             eq: self.eq.clone(),
             normalize: self.normalize,
+            history: self.history.clone(),
         };
         let _ = state.save();
     }
@@ -5232,6 +5317,13 @@ fn unix_nanos() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
+        .unwrap_or(0)
+}
+
+fn unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
         .unwrap_or(0)
 }
 

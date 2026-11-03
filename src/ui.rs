@@ -208,6 +208,7 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
             View::Playlists => app.playlists.len(),
             View::Downloads => app.downloads.len(),
             View::Plugins => app.plugin_entries().len(),
+            View::History => app.history.len(),
             View::Browse => app
                 .browse_page()
                 .map(|page| page.albums.len() + page.tracks.len())
@@ -454,6 +455,10 @@ fn draw_main(frame: &mut Frame, app: &mut App, area: Rect) {
             app.downloads.len()
         ),
         View::Plugins => " ⚙ plugin store · Enter activate · i install · u uninstall ".to_string(),
+        View::History => format!(
+            " ◷ history · {} plays · Enter replay · Ctrl+G stats ",
+            app.history.len()
+        ),
         View::Browse => app
             .browse_page()
             .map(|page| format!(" {} · {} ", page.title, page.subtitle))
@@ -475,6 +480,7 @@ fn draw_main(frame: &mut Frame, app: &mut App, area: Rect) {
         View::Playlists => draw_playlists(frame, app, inner),
         View::Downloads => draw_downloads(frame, app, inner),
         View::Plugins => draw_plugins(frame, app, inner),
+        View::History => draw_history(frame, app, inner),
         View::Browse => draw_browse(frame, app, inner),
     }
 }
@@ -1200,6 +1206,128 @@ fn draw_downloads(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 }
 
+fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.history.is_empty() {
+        draw_empty(
+            frame,
+            area,
+            "No listening history yet.",
+            "Play something. Every track you start shows up here, newest first.",
+        );
+        return;
+    }
+    let tracks = app.history_tracks();
+    let now_id = app.now_playing.as_ref().map(|track| track.id.as_str());
+    let hits = render_track_list(
+        frame,
+        area,
+        &tracks,
+        app.history_selected,
+        now_id,
+        |track| app.is_favorite(&track.id),
+        |track| app.marked.contains_key(&track.id),
+        false,
+    );
+    app.record_hits(
+        area,
+        0,
+        hits.into_iter()
+            .map(|(index, line)| (line, HitAction::Select(View::History, index)))
+            .collect(),
+    );
+}
+
+fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
+    let popup = centered_fixed(area, 58, 18);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(th().accent))
+        .title(Span::styled(
+            " listening stats ",
+            Style::default()
+                .fg(th().accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(th().panel));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let plays = app.history.len();
+    let mut seconds = 0u64;
+    let mut artists: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut tracks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for entry in &app.history {
+        seconds += entry.track.duration.unwrap_or(0);
+        if !entry.track.artist.trim().is_empty() {
+            *artists.entry(entry.track.artist.clone()).or_default() += 1;
+        }
+        *tracks.entry(entry.track.title.clone()).or_default() += 1;
+    }
+    let mut top_artists: Vec<_> = artists.into_iter().collect();
+    top_artists.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let mut top_tracks: Vec<_> = tracks.into_iter().collect();
+    top_tracks.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(" plays ", Style::default().fg(th().dim)),
+            Span::styled(
+                plays.to_string(),
+                Style::default()
+                    .fg(th().accent2)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  ·  listened ", Style::default().fg(th().dim)),
+            Span::styled(
+                format_duration(seconds),
+                Style::default()
+                    .fg(th().accent2)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            " top artists",
+            Style::default().fg(th().faint),
+        )),
+    ];
+    if top_artists.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  nothing yet",
+            Style::default().fg(th().dim),
+        )));
+    }
+    for (index, (name, count)) in top_artists.iter().take(5).enumerate() {
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {}. ", index + 1), Style::default().fg(th().faint)),
+            Span::styled(truncate(name, 34), Style::default().fg(th().fg)),
+            Span::styled(format!("  {count}×"), Style::default().fg(th().dim)),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " most played",
+        Style::default().fg(th().faint),
+    )));
+    for (index, (name, count)) in top_tracks.iter().take(4).enumerate() {
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {}. ", index + 1), Style::default().fg(th().faint)),
+            Span::styled(truncate(name, 34), Style::default().fg(th().fg)),
+            Span::styled(format!("  {count}×"), Style::default().fg(th().dim)),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " any key to close",
+        Style::default().fg(th().faint),
+    )));
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        inner,
+    );
+}
+
 #[allow(clippy::needless_range_loop)]
 fn draw_plugins(frame: &mut Frame, app: &mut App, area: Rect) {
     let entries = app.plugin_entries();
@@ -1644,6 +1772,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         View::Plugins => {
             "Enter activate/install · i install · u uninstall · R rescan · ? help · q quit"
         }
+        View::History => {
+            "Enter replay · a queue · v mark · Ctrl+G stats · 7 history · ? help · q quit"
+        }
         View::Browse => {
             "Esc/h back · Enter open/play · p play all · a/A queue · d download · v mark · N next · l like · y lyrics · R reload"
         }
@@ -1704,6 +1835,7 @@ fn draw_overlay(frame: &mut Frame, app: &mut App, area: Rect) {
         Some(Overlay::Confirm { message, .. }) => draw_confirm(frame, message, area),
         Some(Overlay::Sleep { selected }) => draw_sleep(frame, app, *selected, area),
         Some(Overlay::ImportLink { input }) => draw_import_link(frame, input, area),
+        Some(Overlay::Stats) => draw_stats(frame, app, area),
         Some(Overlay::Lyrics(_)) => draw_lyrics(frame, app, area),
         None => {}
     }
@@ -1779,7 +1911,9 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from(""),
         section("OFFLINE & RADIO"),
         key("d", "download the selection for offline playback"),
-        key("6", "downloads view · Enter plays the local file"),
+        key("5", "downloads view · Enter plays the local file"),
+        key("7", "listening history · Enter replays a track"),
+        key("Ctrl+G", "listening stats: plays, time, top artists"),
         key("Ctrl+T", "radio: keep finding related tracks"),
         key("Ctrl+L", "import songs / a playlist from a link"),
         Line::from(""),

@@ -19,6 +19,17 @@ fn default_repeat() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub track: Track,
+    /// Unix timestamp (seconds) when playback started.
+    pub played_at: u64,
+}
+
+fn default_history() -> Vec<HistoryEntry> {
+    Vec::new()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PersistedState {
     pub playlists: Vec<Playlist>,
@@ -38,6 +49,8 @@ pub struct PersistedState {
     pub radio: bool,
     pub eq: String,
     pub normalize: bool,
+    #[serde(default = "default_history")]
+    pub history: Vec<HistoryEntry>,
 }
 
 impl Default for PersistedState {
@@ -60,6 +73,7 @@ impl Default for PersistedState {
             radio: false,
             eq: "flat".to_string(),
             normalize: false,
+            history: Vec::new(),
         }
     }
 }

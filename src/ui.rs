@@ -1648,6 +1648,15 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
         if app.radio { "on" } else { "off" }.to_string(),
     ));
     lines.push(info_line(
+        "fade",
+        if app.fade_seconds() > 0.0 {
+            format!("{:.1}s", app.fade_seconds())
+        } else {
+            "off".to_string()
+        },
+    ));
+    lines.push(info_line("replaygain", app.replaygain_mode().to_string()));
+    lines.push(info_line(
         "scrobble",
         if app.scrobbling() {
             "listenbrainz"
@@ -1707,6 +1716,67 @@ fn draw_art(frame: &mut Frame, art: &crate::artwork::Artwork, area: Rect) {
             width: cell_w,
             height: cell_h,
         },
+    );
+}
+
+fn draw_eq(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
+    let popup = centered_fixed(area, 76, 24);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(th().accent))
+        .title(Span::styled(
+            " equaliser · ctrl+e ",
+            Style::default()
+                .fg(th().accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(th().panel));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            " ←/→ pick band · ↑/↓ ±0.5 dB · Enter apply · r flat · Esc close",
+            Style::default().fg(th().faint),
+        )),
+        Line::from(""),
+    ];
+    for (index, gain) in app.eq_gains.iter().enumerate() {
+        let active = index == selected;
+        let start = if active { "▌" } else { " " };
+        let span = *gain;
+        let bars = (span.abs() * 2.0) as usize;
+        let bar: String = if span >= 0.0 {
+            format!("{}{}", "█".repeat(bars), "_".repeat(12 - bars.min(12)))
+        } else {
+            format!(
+                "{}{}",
+                "_".repeat(12 - bars.min(12)),
+                "░".repeat(bars.min(12))
+            )
+        };
+        let label = format!("{:6}", crate::app::EQ_BANDS[index]);
+        lines.push(Line::from(vec![
+            Span::styled(format!("{start} "), Style::default().fg(th().accent)),
+            Span::styled(
+                label,
+                Style::default().fg(if active { th().accent } else { th().dim }),
+            ),
+            Span::styled(
+                format!(" {bar} {span:+5.1} dB"),
+                Style::default().fg(if active { th().fg } else { th().faint }),
+            ),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!(" profile: {}", app.eq),
+        Style::default().fg(th().accent2),
+    )));
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        inner,
     );
 }
 
@@ -1951,6 +2021,7 @@ fn draw_overlay(frame: &mut Frame, app: &mut App, area: Rect) {
         Some(Overlay::Sleep { selected }) => draw_sleep(frame, app, *selected, area),
         Some(Overlay::ImportLink { input }) => draw_import_link(frame, input, area),
         Some(Overlay::Stats) => draw_stats(frame, app, area),
+        Some(Overlay::Eq { selected }) => draw_eq(frame, app, *selected, area),
         Some(Overlay::Lyrics(_)) => draw_lyrics(frame, app, area),
         None => {}
     }
@@ -2036,7 +2107,10 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("Ctrl+L", "import songs / a playlist from a link"),
         Line::from(""),
         section("AUDIO & VISUALISER"),
-        key("E", "cycle EQ: flat / bass / vocal / night / loud"),
+        key("E", "cycle EQ: flat / bass / vocal / night / loud / custom"),
+        key("Ctrl+E", "edit the 10-band EQ: ←/→ band, ↑/↓ ±0.5 dB, Enter"),
+        key("Alt+F", "smart fade: 0 / 2 / 4 / 6 s at each end of a track"),
+        key("Alt+R", "replaygain: off / track / album for tagged files"),
         key("Alt+N", "toggle loudness normalisation"),
         key("Ctrl+V", "toggle the cava spectrum panel"),
         key("inspector", "album art loads automatically for the playing track"),

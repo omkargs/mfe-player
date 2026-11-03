@@ -51,6 +51,9 @@ pub struct PersistedState {
     pub normalize: bool,
     #[serde(default = "default_history")]
     pub history: Vec<HistoryEntry>,
+    /// Custom ten-band EQ curve in dB.
+    #[serde(default)]
+    pub eq_gains: Vec<f64>,
 }
 
 impl Default for PersistedState {
@@ -74,6 +77,7 @@ impl Default for PersistedState {
             eq: "flat".to_string(),
             normalize: false,
             history: Vec::new(),
+            eq_gains: Vec::new(),
         }
     }
 }

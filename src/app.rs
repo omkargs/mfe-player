@@ -264,6 +264,9 @@ pub enum Overlay {
         input: String,
     },
     Stats,
+    Eq {
+        selected: usize,
+    },
     Lyrics(Box<LyricsOverlay>),
 }
 
@@ -316,6 +319,9 @@ pub enum PaletteAction {
     SleepTimer,
     ToggleNormalize,
     CycleEq,
+    CycleFade,
+    CycleReplayGain,
+    OpenEq,
     CycleTheme,
     ToggleCava,
     Background,
@@ -562,6 +568,21 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         action: PaletteAction::CycleEq,
     },
     PaletteItem {
+        label: "Custom equaliser (10 bands)",
+        hint: "Ctrl+E",
+        action: PaletteAction::OpenEq,
+    },
+    PaletteItem {
+        label: "Cycle smart fade",
+        hint: "Alt+F",
+        action: PaletteAction::CycleFade,
+    },
+    PaletteItem {
+        label: "Cycle replaygain",
+        hint: "Alt+R",
+        action: PaletteAction::CycleReplayGain,
+    },
+    PaletteItem {
         label: "Cycle colour theme",
         hint: "Alt+T",
         action: PaletteAction::CycleTheme,
@@ -752,8 +773,24 @@ pub struct App {
     artwork_url: Option<String>,
     pub spinner: usize,
     scrobbler: Scrobbler,
+    /// Lossless glue between tracks: ramps mpv's volume down at the end of a
+    /// song and back up at the start of the next one.
+    fade_level: f64,
+    /// Ten user-editable EQ bands in dB (31 Hz .. 16 kHz).
+    pub eq_gains: [f64; 10],
     recent_queries: Vec<String>,
     dirty_since: Option<Instant>,
+}
+
+/// Centre frequencies of the ten bands users can actually hear and tune.
+pub const EQ_BANDS: [u32; 10] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+
+fn normalize_eq_gains(raw: &[f64]) -> [f64; 10] {
+    let mut gains = [0.0f64; 10];
+    for (index, gain) in raw.iter().take(10).enumerate() {
+        gains[index] = gain.clamp(-12.0, 12.0);
+    }
+    gains
 }
 
 impl App {
@@ -954,6 +991,8 @@ impl App {
             artwork_url: None,
             spinner: 0,
             scrobbler: Scrobbler::new(listenbrainz_token),
+            fade_level: 1.0,
+            eq_gains: normalize_eq_gains(&persisted.eq_gains),
             recent_queries: persisted.recent_queries,
             dirty_since: None,
         };
@@ -1004,6 +1043,7 @@ impl App {
             let position = self.audio_snapshot().position;
             self.scrobbler.tick(&track, position);
         }
+        self.update_fade();
 
         let ended = self
             .audio
@@ -1102,6 +1142,10 @@ impl App {
                 }
                 KeyCode::Char('v') => {
                     self.toggle_cava();
+                    return;
+                }
+                KeyCode::Char('e') => {
+                    self.overlay = Some(Overlay::Eq { selected: 0 });
                     return;
                 }
                 KeyCode::Left => {
@@ -1205,6 +1249,10 @@ impl App {
             }
             KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.toggle_normalize()
+            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::ALT) => self.cycle_fade(),
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.cycle_replaygain()
             }
             KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::ALT) => self.cycle_theme(),
             KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -1391,6 +1439,37 @@ impl App {
             Overlay::Help | Overlay::Stats => {
                 // Any key dismisses help / stats.
             }
+            Overlay::Eq { selected } => match key.code {
+                KeyCode::Esc => {}
+                KeyCode::Left | KeyCode::Char('h') => {
+                    let selected = selected.saturating_sub(1);
+                    self.overlay = Some(Overlay::Eq { selected });
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    let selected = (selected + 1).min(EQ_BANDS.len() - 1);
+                    self.overlay = Some(Overlay::Eq { selected });
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.adjust_eq(selected, 0.5);
+                    self.overlay = Some(Overlay::Eq { selected });
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.adjust_eq(selected, -0.5);
+                    self.overlay = Some(Overlay::Eq { selected });
+                }
+                KeyCode::Char('r') => {
+                    self.eq_gains = [0.0; 10];
+                    self.eq = "flat".to_string();
+                    config::set_line("eq", "\"flat\"");
+                    self.apply_audio_filters();
+                    self.overlay = Some(Overlay::Eq { selected });
+                }
+                KeyCode::Enter => {
+                    self.apply_eq();
+                    self.flash("custom equaliser applied");
+                }
+                _ => self.overlay = Some(Overlay::Eq { selected }),
+            },
             Overlay::Confirm { message, action } => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                     self.run_confirm(action);
@@ -2218,6 +2297,20 @@ impl App {
 
     fn build_filters(&self) -> String {
         let mut filters = String::new();
+        let custom = if self.eq == "custom" {
+            let mut parts = Vec::new();
+            for (index, gain) in self.eq_gains.iter().enumerate() {
+                if gain.abs() >= 0.1 {
+                    parts.push(format!(
+                        "equalizer=f={}:width_type=o:width=1:g={gain:+.1}",
+                        EQ_BANDS[index]
+                    ));
+                }
+            }
+            parts.join(",")
+        } else {
+            String::new()
+        };
         let preset = match self.eq.as_str() {
             "bass" => "equalizer=f=80:width_type=o:width=2:g=6,equalizer=f=220:width_type=o:width=2:g=3",
             "vocal" => "equalizer=f=250:width_type=o:width=2:g=-2,equalizer=f=3000:width_type=o:width=2:g=4",
@@ -2227,6 +2320,8 @@ impl App {
         };
         if !preset.is_empty() {
             filters.push_str(preset);
+        } else if !custom.is_empty() {
+            filters.push_str(&custom);
         }
         if self.normalize && self.eq != "loud" && self.eq != "night" {
             if !filters.is_empty() {
@@ -2239,15 +2334,113 @@ impl App {
 
     fn apply_audio_filters(&mut self) {
         let filters = self.build_filters();
-        if let Some(audio) = self.audio.as_ref() {
-            if let Err(err) = audio.set_filters(&filters) {
-                self.flash(format!("audio filters failed: {err}"));
-            }
+        let mode = self.config.replaygain.clone();
+        let error = self.audio.as_ref().and_then(|audio| {
+            audio
+                .set_filters(&filters)
+                .and_then(|()| audio.set_replaygain(&mode))
+                .err()
+        });
+        if let Some(err) = error {
+            self.flash(format!("audio filters failed: {err}"));
         }
     }
 
+    /// Smart fade: no dropping between songs, no guillotine after the last
+    /// beat. The volume ramps down over the final `fade_seconds` and back up
+    /// over the first `fade_seconds` of what comes next.
+    fn update_fade(&mut self) {
+        if self.sleep_fading || self.now_playing.is_none() {
+            return;
+        }
+        let fade = self.config.fade_seconds;
+        let snapshot = self.audio_snapshot();
+        let duration = if snapshot.duration > 1.0 {
+            snapshot.duration
+        } else {
+            self.now_playing
+                .as_ref()
+                .and_then(|track| track.duration)
+                .map(|duration| duration as f64)
+                .unwrap_or(0.0)
+        };
+        let level = if fade <= 0.05 || duration <= 1.0 {
+            1.0
+        } else {
+            let position = snapshot.position.max(0.0);
+            let fade_in = (position / fade).clamp(0.0, 1.0);
+            let fade_out = ((duration - position) / fade).clamp(0.0, 1.0);
+            fade_in.min(fade_out)
+        };
+        if (level - self.fade_level).abs() < 0.01 {
+            return;
+        }
+        self.fade_level = level;
+        if let Some(audio) = self.audio.as_ref() {
+            let _ = audio.set_volume(self.volume * level);
+        }
+    }
+
+    fn adjust_eq(&mut self, index: usize, delta: f64) {
+        if let Some(gain) = self.eq_gains.get_mut(index) {
+            *gain = (*gain + delta).clamp(-12.0, 12.0);
+        }
+    }
+
+    /// Autosave the curve and push it straight to mpv.
+    fn apply_eq(&mut self) {
+        self.eq = "custom".to_string();
+        config::set_line("eq", "\"custom\"");
+        let gains = self
+            .eq_gains
+            .iter()
+            .map(|gain| format!("{gain}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        config::set_line("eq_gains", &format!("[{gains}]"));
+        self.apply_audio_filters();
+        self.mark_dirty();
+    }
+
+    fn cycle_fade(&mut self) {
+        const OPTIONS: &[f64] = &[0.0, 2.0, 4.0, 6.0];
+        let current = OPTIONS
+            .iter()
+            .position(|seconds| (seconds - self.config.fade_seconds).abs() < 0.25)
+            .unwrap_or(0);
+        let next = OPTIONS[(current + 1) % OPTIONS.len()];
+        self.config.fade_seconds = next;
+        config::set_line("fade_seconds", &format!("{next}"));
+        self.fade_level = 1.0;
+        self.update_fade();
+        self.flash(if next > 0.0 {
+            format!("smart fade on — {next:>4.1}s at each end")
+        } else {
+            "smart fade off".to_string()
+        });
+        self.mark_dirty();
+    }
+
+    fn cycle_replaygain(&mut self) {
+        let next = match self.config.replaygain.as_str() {
+            "off" => "track",
+            "track" => "album",
+            _ => "off",
+        };
+        self.config.replaygain = next.to_string();
+        config::set_line("replaygain", &format!("\"{next}\""));
+        if let Some(audio) = self.audio.as_ref() {
+            if let Err(err) = audio.set_replaygain(next) {
+                self.flash(format!("replaygain failed: {err}"));
+                return;
+            }
+        }
+        self.flash(format!("replaygain: {next}"));
+        self.mark_dirty();
+    }
+
     fn cycle_eq(&mut self) {
-        const PRESETS: &[&str] = &["flat", "bass", "vocal", "night", "loud"];
+        const PRESETS: &[&str] = &["flat", "bass", "vocal", "night", "loud", "custom"];
         let next = PRESETS
             .iter()
             .position(|preset| *preset == self.eq)
@@ -4802,6 +4995,9 @@ impl App {
             PaletteAction::SleepTimer => self.open_sleep_timer(),
             PaletteAction::ToggleNormalize => self.toggle_normalize(),
             PaletteAction::CycleEq => self.cycle_eq(),
+            PaletteAction::CycleFade => self.cycle_fade(),
+            PaletteAction::CycleReplayGain => self.cycle_replaygain(),
+            PaletteAction::OpenEq => self.overlay = Some(Overlay::Eq { selected: 0 }),
             PaletteAction::CycleTheme => self.cycle_theme(),
             PaletteAction::ImportLink => self.open_link_import(),
             PaletteAction::ToggleCava => self.toggle_cava(),
@@ -5094,6 +5290,14 @@ impl App {
             View::History => self.history_selected = self.history.len().saturating_sub(1),
             View::Library => self.library_selected = self.library.len().saturating_sub(1),
         }
+    }
+
+    pub fn fade_seconds(&self) -> f64 {
+        self.config.fade_seconds
+    }
+
+    pub fn replaygain_mode(&self) -> &str {
+        &self.config.replaygain
     }
 
     pub fn scrobbling(&self) -> bool {
@@ -5447,6 +5651,7 @@ impl App {
             eq: self.eq.clone(),
             normalize: self.normalize,
             history: self.history.clone(),
+            eq_gains: self.eq_gains.to_vec(),
         };
         let _ = state.save();
     }

@@ -219,6 +219,12 @@ impl AudioEngine {
         Ok(())
     }
 
+    /// ReplayGain mode (`off`, `track`, `album`).
+    pub fn set_replaygain(&self, mode: &str) -> Result<()> {
+        self.command(json!(["set_property", "replaygain", mode]))?;
+        Ok(())
+    }
+
     pub fn seek_relative(&self, seconds: f64) -> Result<()> {
         let snapshot = self.snapshot();
         let target = (snapshot.position + seconds).max(0.0);

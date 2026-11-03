@@ -197,12 +197,18 @@ pub struct AppConfig {
     pub cava_bars: u16,
     pub normalize: bool,
     pub eq: String,
+    /// Custom EQ curve in dB for the ten bands (only used when eq = "custom").
+    pub eq_gains: Vec<f64>,
     pub audio_device: String,
     pub mpris: bool,
     /// Folders scanned for local audio (FLAC/MP3/Opus/...). `~` is expanded.
     pub library_paths: Vec<String>,
     /// ListenBrainz user token. Empty disables scrobbling entirely.
     pub listenbrainz_token: String,
+    /// Seconds of fade at each end of a track (0 disables smart fade).
+    pub fade_seconds: f64,
+    /// ReplayGain gain applied to files that carry the tags: off | track | album.
+    pub replaygain: String,
 }
 
 impl Default for AppConfig {
@@ -221,10 +227,13 @@ impl Default for AppConfig {
             cava_bars: default_cava_bars(),
             normalize: false,
             eq: default_eq(),
+            eq_gains: Vec::new(),
             audio_device: String::new(),
             mpris: default_true(),
             library_paths: Vec::new(),
             listenbrainz_token: String::new(),
+            fade_seconds: 0.0,
+            replaygain: "off".to_string(),
         }
     }
 }
@@ -274,6 +283,16 @@ library_paths = []
 # Paste your user token here and every play is submitted from a background
 # thread. Leave empty to keep everything local.
 listenbrainz_token = ""
+
+# Smart fade: seconds of fade at the start and the end of every track.
+# 0 = off, 2-4 = gentle, 6 = long. Cycle with Alt+F.
+fade_seconds = 0
+
+# ReplayGain for your own files: off | track | album. Cycle with Alt+R.
+replaygain = "off"
+
+# Custom ten-band EQ curve in dB. Tune it with Ctrl+E in the app.
+eq_gains = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 "#;
 
 pub fn load_config() -> (AppConfig, Option<String>) {
@@ -289,6 +308,11 @@ pub fn load_config() -> (AppConfig, Option<String>) {
                 config.long_seek_step = config.long_seek_step.clamp(1.0, 600.0);
                 config.volume_step = config.volume_step.clamp(1.0, 50.0);
                 config.cava_bars = config.cava_bars.clamp(4, 96);
+                config.fade_seconds = config.fade_seconds.clamp(0.0, 15.0);
+                config.replaygain = config.replaygain.to_ascii_lowercase();
+                if !["off", "track", "album"].contains(&config.replaygain.as_str()) {
+                    config.replaygain = "off".to_string();
+                }
                 (config, None)
             }
             Err(err) => (
@@ -303,8 +327,8 @@ pub fn load_config() -> (AppConfig, Option<String>) {
     }
 }
 
-/// Rewrite just the `theme` line so user comments in config.toml survive.
-pub fn set_theme_in_file(name: &str) {
+/// Rewrite one `key` line in the config so user comments survive.
+fn set_key_in_file(key: &str, value: &str) {
     let path = config_path();
     let Ok(raw) = fs::read_to_string(&path) else {
         return;
@@ -312,8 +336,12 @@ pub fn set_theme_in_file(name: &str) {
     let mut replaced = false;
     let mut out = String::new();
     for line in raw.lines() {
-        if !replaced && line.trim_start().starts_with("theme") && line.contains('=') {
-            out.push_str(&format!("theme = \"{name}\"\n"));
+        let starts = line
+            .trim_start()
+            .strip_prefix(key)
+            .and_then(|rest| rest.trim_start().strip_prefix('='));
+        if !replaced && starts.is_some() {
+            out.push_str(&format!("{key} = {value}\n"));
             replaced = true;
         } else {
             out.push_str(line);
@@ -321,9 +349,19 @@ pub fn set_theme_in_file(name: &str) {
         }
     }
     if !replaced {
-        out.push_str(&format!("theme = \"{name}\"\n"));
+        out.push_str(&format!("{key} = {value}\n"));
     }
     let _ = fs::write(path, out);
+}
+
+/// Rewrite just the `theme` line so user comments in config.toml survive.
+pub fn set_theme_in_file(name: &str) {
+    set_key_in_file("theme", &format!("\"{name}\""));
+}
+
+/// Persist an audio setting that can be cycled from the keyboard.
+pub fn set_line(key: &str, value: &str) {
+    set_key_in_file(key, value);
 }
 
 pub fn ensure_dirs() -> Result<()> {

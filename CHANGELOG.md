@@ -16,6 +16,12 @@
   to the clipboard via wl-copy/xclip/xsel/pbcopy.
 - **ListenBrainz scrobbling:** optional token in the config submits now-playing
   and listens from a background thread.
+- **Smart fade:** `Alt+F` ramps volume down at the end of a track and back up
+  at the start of the next one (0/2/4/6 s, persisted in config).
+- **ReplayGain:** `Alt+R` cycles off/track/album for tagged files, pushed to
+  mpv on startup and whenever it changes.
+- **Editable EQ:** `Ctrl+E` opens a 10-band equaliser (31 Hz–16 kHz) with
+  ±0.5 dB nudging; the curve is persisted and rendered as an mpv filter chain.
 
 ## v0.2.0 — Music For Everyone
 

@@ -8,6 +8,7 @@ mod library;
 mod models;
 mod mpris;
 mod plugins;
+mod social;
 mod state;
 mod theme;
 mod ui;
@@ -54,6 +55,21 @@ fn main() -> Result<()> {
                 "{}",
                 daemon::status_json()["text"].as_str().unwrap_or("idle")
             );
+            return Ok(());
+        }
+        Some("share") => {
+            let state = state::PersistedState::load().0;
+            match state.now_playing.as_ref() {
+                Some(track) => {
+                    let line = social::share_line(track);
+                    println!("{line}");
+                    match social::copy(&line) {
+                        Ok(tool) => eprintln!("copied with {tool}"),
+                        Err(err) => eprintln!("clipboard unavailable: {err}"),
+                    }
+                }
+                None => println!("nothing playing"),
+            }
             return Ok(());
         }
         Some("completions") => {
@@ -175,6 +191,7 @@ fn cli_action() -> CliAction {
                mfe-player status          what is playing right now?\n\
                mfe-player status --json   waybar/polybar/tmux friendly JSON\n\
                mfe-player current         one-line now playing\n\
+               mfe-player share           copy now playing to the clipboard\n\
                mfe-player toggle          play/pause the background player\n\
                mfe-player stop            stop playback and the daemon\n\
                mfe-player completions bash|zsh|fish\n\n\

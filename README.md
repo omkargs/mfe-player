@@ -52,6 +52,7 @@ This is **MFE Player** — **M**usic **F**or **E**veryone.
 | **Sleep timer** | `z` fades out over the last 15 seconds and pauses. No mid-chorus guillotine. |
 | **Playback speed** | `[` / `]` for 0.5×–2.0×, `\` to reset. Podcasts, mixes and 10-hour loops welcome. |
 | **M3U import/export** | `Alt+E` / `Alt+I` so your playlists can escape this app too. |
+| **Share without an account** | `Y` (or `mfe share`) copies the current track to your clipboard. No OAuth, no social graph, no "sign in to continue". |
 | **History & stats** | Every play is remembered (`7`). `Ctrl+G` shows listening time, top artists and most-played tracks. |
 | **Your own files** | Point `library_paths` at real folders and press `8`. Tags and embedded cover art are read with `lofty`; no upload, no account, no phoning home. |
 
@@ -134,6 +135,7 @@ Press `?` inside the app for the full, searchable map. The ones you'll actually 
 | `d` · `5` | Download · downloads view |
 | `7` · `Ctrl+G` | Listening history · listening stats |
 | `8` · `R` | Local library · rescan folders |
+| `Y` | Copy now playing to the clipboard |
 | `Ctrl+L` | Import song/playlist from a link |
 | `Ctrl+T` | Toggle radio autoplay |
 | `Ctrl+V` | Toggle cava spectrum |
@@ -193,6 +195,7 @@ One-liners:
 
 ```bash
 mfe current                 # ▶ Get Lucky — Daft Punk
+mfe share                   # copy now playing to the clipboard
 mfe toggle                  # pause/resume
 mfe completions bash        # also: zsh, fish
 ```

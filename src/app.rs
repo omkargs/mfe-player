@@ -294,6 +294,7 @@ pub enum PaletteAction {
     ViewHistory,
     ViewLibrary,
     RescanLibrary,
+    ShareNowPlaying,
     ShowStats,
     GoBack,
     PlayNext,
@@ -530,6 +531,11 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         action: PaletteAction::RescanLibrary,
     },
     PaletteItem {
+        label: "Share now playing",
+        hint: "Y",
+        action: PaletteAction::ShareNowPlaying,
+    },
+    PaletteItem {
         label: "Listening stats",
         hint: "Ctrl+G",
         action: PaletteAction::ShowStats,
@@ -630,6 +636,9 @@ enum AppEvent {
     LyricsDone {
         track_id: String,
         result: std::result::Result<LyricsDoc, String>,
+    },
+    ShareDone {
+        result: std::result::Result<String, String>,
     },
     ArtworkDone {
         track_id: String,
@@ -1212,6 +1221,7 @@ impl App {
             KeyCode::Char('s') => self.toggle_shuffle(),
             KeyCode::Char('r') => self.cycle_repeat(),
             KeyCode::Char('y') => self.open_lyrics(),
+            KeyCode::Char('Y') => self.share_now_playing(),
             KeyCode::Char('F') => self.toggle_favorite(),
             KeyCode::Char('P') => self.begin_add_to_playlist(),
             KeyCode::Char('a') => self.queue_selected(),
@@ -1937,6 +1947,10 @@ impl App {
                     }
                 }
             }
+            AppEvent::ShareDone { result } => match result {
+                Ok(line) => self.flash(format!("copied: {line}")),
+                Err(err) => self.flash(format!("share failed: {err}")),
+            },
             AppEvent::LibraryDone { tracks, error } => {
                 self.library_scanning = false;
                 if let Some(error) = error {
@@ -3421,6 +3435,20 @@ impl App {
             });
     }
 
+    fn share_now_playing(&mut self) {
+        let Some(track) = self.now_playing.clone() else {
+            self.flash("nothing playing to share");
+            return;
+        };
+        let tx = self.events_tx.clone();
+        let _ = thread::Builder::new()
+            .name("share".to_string())
+            .spawn(move || {
+                let result = crate::social::share(&track).map_err(|err| err.to_string());
+                let _ = tx.send(AppEvent::ShareDone { result });
+            });
+    }
+
     fn record_history(&mut self, track: &Track) {
         let now = unix_secs();
         if let Some(last) = self.history.first() {
@@ -4735,6 +4763,7 @@ impl App {
             PaletteAction::ViewHistory => self.switch_view(View::History),
             PaletteAction::ViewLibrary => self.switch_view(View::Library),
             PaletteAction::RescanLibrary => self.start_library_scan(),
+            PaletteAction::ShareNowPlaying => self.share_now_playing(),
             PaletteAction::ShowStats => self.overlay = Some(Overlay::Stats),
             PaletteAction::NewPlaylist => {
                 self.pending_playlist_tracks.clear();

@@ -1854,7 +1854,7 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hints = match app.view {
         View::Search => {
-            "/ search · Enter play/open · a queue · v mark · d download · P playlist · Ctrl+L import · Ctrl+T radio · ?"
+            "/ search · Enter play/open · a queue · v mark · d download · Y share · Ctrl+L import · Ctrl+T radio · ?"
         }
         View::Queue => {
             "/ filter · Enter play · t now playing · J/K reorder · x remove · Alt+U undo · Alt+K clear upcoming · n/b skip · ?"
@@ -2020,6 +2020,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("5", "downloads view · Enter plays the local file"),
         key("7", "listening history · Enter replays a track"),
         key("8", "local library · Enter plays your own files"),
+        key("Y", "share now playing to the clipboard"),
         key("R", "rescan library folders after adding music"),
         key("Ctrl+G", "listening stats: plays, time, top artists"),
         key("Ctrl+T", "radio: keep finding related tracks"),

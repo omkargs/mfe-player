@@ -1474,6 +1474,23 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let selected = app.selected_track().or_else(|| app.now_playing.clone());
+    let art = app.artwork.as_ref().filter(|_| {
+        selected
+            .as_ref()
+            .is_some_and(|track| app.artwork_track_id.as_deref() == Some(track.id.as_str()))
+    });
+    let art_height = if art.is_some() && inner.width >= 14 {
+        (inner.width / 2).min(inner.height / 2).max(4)
+    } else {
+        0
+    };
+    let sections =
+        Layout::vertical([Constraint::Length(art_height), Constraint::Min(0)]).split(inner);
+    if let Some(art) = art {
+        draw_art(frame, art, sections[0]);
+    }
+    let body = sections[1];
+
     let Some(track) = selected else {
         frame.render_widget(
             Paragraph::new(vec![
@@ -1492,7 +1509,7 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
             ])
             .style(Style::default().bg(th().panel))
             .wrap(Wrap { trim: true }),
-            inner,
+            body,
         );
         return;
     };
@@ -1594,7 +1611,43 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(lines)
             .style(Style::default().bg(th().panel))
             .wrap(Wrap { trim: true }),
-        inner,
+        body,
+    );
+}
+
+fn draw_art(frame: &mut Frame, art: &crate::artwork::Artwork, area: Rect) {
+    if area.width < 4 || area.height < 2 {
+        return;
+    }
+    let cell_h = area.height.min((area.width / 2).max(1));
+    let cell_w = (cell_h * 2).min(area.width);
+    let x_off = area.x + (area.width.saturating_sub(cell_w)) / 2;
+    let mut lines = Vec::with_capacity(cell_h as usize);
+    for row in 0..cell_h {
+        let mut spans = Vec::with_capacity(cell_w as usize);
+        let y0 = ((row as f32 / cell_h as f32) * art.height as f32) as usize;
+        let y1 = (((row as f32 + 1.0) / cell_h as f32) * art.height as f32) as usize;
+        for col in 0..cell_w {
+            let x = ((col as f32 / cell_w as f32) * art.width as f32) as usize;
+            let top = art.pixel(x, y0.min(art.height - 1));
+            let bottom = art.pixel(x, y1.min(art.height - 1));
+            spans.push(Span::styled(
+                "▀",
+                Style::default()
+                    .fg(ratatui::style::Color::Rgb(top[0], top[1], top[2]))
+                    .bg(ratatui::style::Color::Rgb(bottom[0], bottom[1], bottom[2])),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Rect {
+            x: x_off,
+            y: area.y,
+            width: cell_w,
+            height: cell_h,
+        },
     );
 }
 
@@ -1921,6 +1974,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("E", "cycle EQ: flat / bass / vocal / night / loud"),
         key("Alt+N", "toggle loudness normalisation"),
         key("Ctrl+V", "toggle the cava spectrum panel"),
+        key("inspector", "album art loads automatically for the playing track"),
         key("Alt+T", "cycle colour theme"),
         key("Ctrl+P / :", "fzf command palette (every action)"),
         key("playerctl", "media keys control this player via MPRIS"),

@@ -15,6 +15,7 @@ async-channel = "2.5.0"
 crossterm = "0.29"
 futures-lite = "2.6.1"
 fuzzy-matcher = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 libc = "0.2"
 mpris-server = "0.11.0"
 ratatui = "0.29"

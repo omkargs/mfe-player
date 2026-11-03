@@ -10,6 +10,7 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use ratatui::layout::Rect;
 
+use crate::artwork::Artwork;
 use crate::audio::{AudioEngine, AudioSnapshot};
 use crate::cava::Cava;
 use crate::config::{self, AppConfig};
@@ -612,6 +613,10 @@ enum AppEvent {
         track_id: String,
         result: std::result::Result<LyricsDoc, String>,
     },
+    ArtworkDone {
+        track_id: String,
+        result: std::result::Result<Artwork, String>,
+    },
 }
 
 pub struct App {
@@ -706,6 +711,9 @@ pub struct App {
     events_tx: Sender<AppEvent>,
     events_rx: Receiver<AppEvent>,
     pub lyrics_cache: HashMap<String, LyricsDoc>,
+    pub artwork: Option<Artwork>,
+    pub artwork_track_id: Option<String>,
+    artwork_url: Option<String>,
     pub spinner: usize,
     recent_queries: Vec<String>,
     dirty_since: Option<Instant>,
@@ -896,6 +904,9 @@ impl App {
             events_tx,
             events_rx,
             lyrics_cache: HashMap::new(),
+            artwork: None,
+            artwork_track_id: None,
+            artwork_url: None,
             spinner: 0,
             recent_queries: persisted.recent_queries,
             dirty_since: None,
@@ -919,6 +930,9 @@ impl App {
         app.apply_audio_filters();
         if let Some(audio) = app.audio.as_ref() {
             let _ = audio.set_speed(app.speed);
+        }
+        if let Some(track) = app.now_playing.clone() {
+            app.request_artwork(&track);
         }
         if let Some(err) = app.cava.as_ref().and_then(Cava::error) {
             app.flash(err.to_string());
@@ -1864,6 +1878,22 @@ impl App {
                     }
                     Err(err) => {
                         self.flash(format!("download failed: {err}"));
+                    }
+                }
+            }
+            AppEvent::ArtworkDone { track_id, result } => {
+                if self.now_playing.as_ref().map(|t| t.id.as_str()) == Some(track_id.as_str()) {
+                    match result {
+                        Ok(art) => {
+                            self.artwork = Some(art);
+                            self.artwork_track_id = Some(track_id);
+                        }
+                        Err(_) => {
+                            // Broken cover link is not worth a toast; the
+                            // inspector simply keeps its text layout.
+                            self.artwork = None;
+                            self.artwork_track_id = None;
+                        }
                     }
                 }
             }
@@ -3294,6 +3324,24 @@ impl App {
         self.pending_seek = start_at;
         self.mark_dirty();
         self.start_stream(track);
+    }
+
+    fn request_artwork(&mut self, track: &Track) {
+        let Some(url) = track.artwork.clone().filter(|url| !url.trim().is_empty()) else {
+            return;
+        };
+        if self.artwork_url.as_deref() == Some(url.as_str()) {
+            return;
+        }
+        self.artwork_url = Some(url.clone());
+        let track_id = track.id.clone();
+        let tx = self.events_tx.clone();
+        let _ = thread::Builder::new()
+            .name("artwork".to_string())
+            .spawn(move || {
+                let result = crate::artwork::load(&url).map_err(|err| err.to_string());
+                let _ = tx.send(AppEvent::ArtworkDone { track_id, result });
+            });
     }
 
     fn record_history(&mut self, track: &Track) {

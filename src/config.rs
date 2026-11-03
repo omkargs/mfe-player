@@ -102,6 +102,10 @@ pub fn downloads_dir() -> PathBuf {
     cache_dir().join("downloads")
 }
 
+pub fn artwork_dir() -> PathBuf {
+    cache_dir().join("artwork")
+}
+
 pub fn runtime_dir() -> PathBuf {
     if let Ok(xdg) = env::var("XDG_RUNTIME_DIR") {
         if !xdg.trim().is_empty() {

@@ -1,4 +1,5 @@
 mod app;
+mod artwork;
 mod audio;
 mod cava;
 mod config;

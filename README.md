@@ -46,6 +46,7 @@ This is **MFE Player** — **M**usic **F**or **E**veryone.
 | **Link importing** | `Ctrl+L` accepts a YouTube/SoundCloud track or playlist, or a remote `.m3u`. Paste and go. |
 | **Radio autoplay** | `Ctrl+T` seeds a never-ending station from the current track so the silence never wins. |
 | **MPRIS / media keys** | Works with `playerctl`, keyboard media keys and desktop widgets — even while detached. |
+| **Album art in the terminal** | Cover art renders as truecolor half-blocks in the inspector — no sixel or Kitty protocol required. |
 | **Cava visualiser** | `Ctrl+V` toggles a smoothed spectrum panel that dances to the actual audio. |
 | **12 themes** | `Alt+T` cycles live, and **preserves the comments in your config file** instead of nuking them. |
 | **Sleep timer** | `z` fades out over the last 15 seconds and pauses. No mid-chorus guillotine. |

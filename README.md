@@ -58,6 +58,8 @@ This is **MFE Player** — **M**usic **F**or **E**veryone.
 | **Share without an account** | `Y` (or `mfe share`) copies the current track to your clipboard. No OAuth, no social graph, no "sign in to continue". |
 | **History & stats** | Every play is remembered (`7`). `Ctrl+G` shows listening time, top artists and most-played tracks. |
 | **Your own files** | Point `library_paths` at real folders and press `8`. Tags and embedded cover art are read with `lofty`; no upload, no account, no phoning home. |
+| **Internet Archive** | A second metadata plugin searches 800 years of free music, live sets and public-domain recordings on archive.org. |
+| **Radio Browser** | Search live stations worldwide with the `Radio` plugin and pipe them straight into mpv (ICY metadata and all). |
 
 ---
 

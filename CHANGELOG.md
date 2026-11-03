@@ -22,6 +22,12 @@
   mpv on startup and whenever it changes.
 - **Editable EQ:** `Ctrl+E` opens a 10-band equaliser (31 Hz–16 kHz) with
   ±0.5 dB nudging; the curve is persisted and rendered as an mpv filter chain.
+- **Internet Archive:** a new metadata + streaming bundle searches archive.org
+  for free music, live sets and public-domain recordings and resolves them to
+  direct mp3/flac URLs.
+- **Radio Browser:** another metadata + streaming bundle queries
+  radio-browser.info for live stations worldwide and pipes them straight into
+  mpv (mpv plays ICY/SHOUTcast natively).
 
 ## v0.2.0 — Music For Everyone
 

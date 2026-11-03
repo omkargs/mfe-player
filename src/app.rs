@@ -3804,13 +3804,33 @@ impl App {
 
     fn resolve_track(&mut self, track: Track, source: usize) {
         let order = self.streaming_order();
-        let Some(plugin) = order.get(source).cloned() else {
+        let mut plugin_idx = source;
+        if source == 0 {
+            let preferred_id = if track.id.starts_with("ia:") || track.source == "internet-archive"
+            {
+                Some("stream_internetarchive")
+            } else if track.id.starts_with("radio:") || track.source == "radio-browser" {
+                Some("stream_radiobrowser")
+            } else if track.id.starts_with("sc:") || track.source == "soundcloud" {
+                Some("stream_soundcloud")
+            } else if track.id.starts_with("yt:") || track.source == "youtube" {
+                Some("stream_youtube")
+            } else {
+                None
+            };
+            if let Some(pref) = preferred_id {
+                if let Some(pos) = order.iter().position(|p| p.manifest.id == pref) {
+                    plugin_idx = pos;
+                }
+            }
+        }
+        let plugin_idx = plugin_idx.min(order.len().saturating_sub(1));
+        let Some(plugin) = order.get(plugin_idx).cloned() else {
             self.resolving = false;
             self.flash("no streaming plugin installed — open the plugin store (5)");
             return;
         };
-        let source = source.min(order.len().saturating_sub(1));
-        self.stream_source = source;
+        self.stream_source = plugin_idx;
         self.resolving = true;
         self.pending_track_id = Some(track.id.clone());
         self.resolve_started = Some(Instant::now());

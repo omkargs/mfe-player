@@ -151,6 +151,46 @@ pub fn catalog() -> Vec<BundledPlugin> {
             ),
             script: include_str!("../plugins/lyrics_lrclib.py"),
         },
+        BundledPlugin {
+            manifest: manifest(
+                "internetarchive",
+                "Internet Archive Metadata",
+                PluginKind::Metadata,
+                "Searches the Internet Archive for free music, live sets and public-domain recordings.",
+                None,
+            ),
+            script: include_str!("../plugins/metadata_internetarchive.py"),
+        },
+        BundledPlugin {
+            manifest: manifest(
+                "radiobrowser",
+                "Radio Browser Metadata",
+                PluginKind::Metadata,
+                "Searches radio-browser.info for live stations worldwide.",
+                None,
+            ),
+            script: include_str!("../plugins/metadata_radiobrowser.py"),
+        },
+        BundledPlugin {
+            manifest: manifest(
+                "stream_internetarchive",
+                "Internet Archive Stream",
+                PluginKind::Streaming,
+                "Resolves Internet Archive tracks into direct download URLs.",
+                None,
+            ),
+            script: include_str!("../plugins/stream_internetarchive.py"),
+        },
+        BundledPlugin {
+            manifest: manifest(
+                "stream_radiobrowser",
+                "Radio Browser Stream",
+                PluginKind::Streaming,
+                "Plays live radio stations found via Radio Browser.",
+                None,
+            ),
+            script: include_str!("../plugins/stream_radiobrowser.py"),
+        },
     ]
 }
 
@@ -219,10 +259,9 @@ impl PluginRegistry {
         let mut installed = Vec::new();
         for bundled in self.catalog.clone() {
             let id = bundled.manifest.id.clone();
-            let kind = bundled.manifest.kind;
             let needs_install = match self.by_id(&id) {
                 Some(existing) => existing.manifest.version != bundled.manifest.version,
-                None => self.first_of_kind(kind).is_none(),
+                None => true,
             };
             if needs_install && self.install(&id).is_ok() {
                 installed.push(id);

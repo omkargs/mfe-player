@@ -3724,6 +3724,35 @@ impl App {
             return;
         }
         self.record_history(&track);
+        self.request_artwork(&track);
+        self.scrobbler.on_start(&track);
+
+        // Local files are as fast as it gets: play them directly.
+        if track.source == "local" {
+            if let Some(path) = track.id.strip_prefix("local:") {
+                if std::path::Path::new(path).exists() {
+                    let info = StreamInfo {
+                        url: path.to_string(),
+                        extractor: Some("local".to_string()),
+                        ..Default::default()
+                    };
+                    self.current_stream = Some(info);
+                    if let Some(audio) = self.audio.as_ref() {
+                        let start = self.pending_seek.take().unwrap_or(0.0);
+                        if audio
+                            .load_from(self.current_stream.as_ref().unwrap(), start)
+                            .is_ok()
+                        {
+                            self.status = "playing local file".to_string();
+                            self.mark_dirty();
+                            self.prefetch_next();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // Offline copies always win: they are instant and immune to CDN 403s.
         if let Some(path) = self.download_path(&track.id).cloned() {
             if path.exists() {

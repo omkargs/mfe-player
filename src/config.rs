@@ -106,6 +106,10 @@ pub fn artwork_dir() -> PathBuf {
     cache_dir().join("artwork")
 }
 
+pub fn library_cache_path() -> PathBuf {
+    config_dir().join("library.json")
+}
+
 pub fn runtime_dir() -> PathBuf {
     if let Ok(xdg) = env::var("XDG_RUNTIME_DIR") {
         if !xdg.trim().is_empty() {
@@ -195,6 +199,8 @@ pub struct AppConfig {
     pub eq: String,
     pub audio_device: String,
     pub mpris: bool,
+    /// Folders scanned for local audio (FLAC/MP3/Opus/...). `~` is expanded.
+    pub library_paths: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -215,6 +221,7 @@ impl Default for AppConfig {
             eq: default_eq(),
             audio_device: String::new(),
             mpris: default_true(),
+            library_paths: Vec::new(),
         }
     }
 }
@@ -255,6 +262,10 @@ audio_device = ""          # empty = system default (e.g. "alsa/hdmi:CARD=HDMI")
 
 # Desktop media keys / playerctl integration.
 mpris = true
+
+# Local music folders (FLAC, MP3, Opus, Ogg, M4A...). Scanned on launch.
+# Example: library_paths = ["~/Music", "/mnt/archive/albums"]
+library_paths = []
 "#;
 
 pub fn load_config() -> (AppConfig, Option<String>) {

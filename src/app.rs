@@ -14,6 +14,7 @@ use crate::artwork::Artwork;
 use crate::audio::{AudioEngine, AudioSnapshot};
 use crate::cava::Cava;
 use crate::config::{self, AppConfig};
+use crate::library;
 use crate::models::{
     parse_lyrics, truncate, Album, Artist, LyricLine, LyricsDoc, Playlist, SearchPayload,
     SearchResults, StreamInfo, Track,
@@ -32,11 +33,12 @@ pub enum View {
     Downloads,
     Plugins,
     History,
+    Library,
     Browse,
 }
 
 impl View {
-    pub const ALL: [View; 7] = [
+    pub const ALL: [View; 8] = [
         View::Search,
         View::Queue,
         View::Favorites,
@@ -44,6 +46,7 @@ impl View {
         View::Downloads,
         View::Plugins,
         View::History,
+        View::Library,
     ];
 
     pub fn title(self) -> &'static str {
@@ -55,6 +58,7 @@ impl View {
             Self::Downloads => "downloads",
             Self::Plugins => "plugin store",
             Self::History => "history",
+            Self::Library => "local library",
             Self::Browse => "browse",
         }
     }
@@ -68,6 +72,7 @@ impl View {
             Self::Downloads => "⤓",
             Self::Plugins => "⚙",
             Self::History => "◷",
+            Self::Library => "♫",
             Self::Browse => "◉",
         }
     }
@@ -205,6 +210,7 @@ pub enum FilterKind {
     Queue,
     Favorites,
     Playlist(usize),
+    Library,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -286,6 +292,8 @@ pub enum PaletteAction {
     ViewDownloads,
     ViewPlugins,
     ViewHistory,
+    ViewLibrary,
+    RescanLibrary,
     ShowStats,
     GoBack,
     PlayNext,
@@ -512,6 +520,16 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         action: PaletteAction::ViewHistory,
     },
     PaletteItem {
+        label: "Go to local library",
+        hint: "8",
+        action: PaletteAction::ViewLibrary,
+    },
+    PaletteItem {
+        label: "Rescan local library",
+        hint: "R",
+        action: PaletteAction::RescanLibrary,
+    },
+    PaletteItem {
         label: "Listening stats",
         hint: "Ctrl+G",
         action: PaletteAction::ShowStats,
@@ -617,6 +635,10 @@ enum AppEvent {
         track_id: String,
         result: std::result::Result<Artwork, String>,
     },
+    LibraryDone {
+        tracks: Vec<Track>,
+        error: Option<String>,
+    },
 }
 
 pub struct App {
@@ -643,6 +665,10 @@ pub struct App {
     pub favorites_selected: usize,
     pub history: Vec<HistoryEntry>,
     pub history_selected: usize,
+    pub library: Vec<Track>,
+    pub library_selected: usize,
+    pub library_scanning: bool,
+    library_paths: Vec<PathBuf>,
     pub playlists: Vec<Playlist>,
     pub playlist_selected: usize,
     pub downloads: HashMap<String, (Track, PathBuf)>,
@@ -793,6 +819,9 @@ impl App {
             .unwrap_or(0)
             .min(persisted.queue.len().saturating_sub(1));
 
+        let library_paths = library::configured_paths(&config.library_paths);
+        let library_tracks = library::load_cache();
+
         let (events_tx, events_rx) = mpsc::channel();
         let status = if attached {
             "attached to the background audio session".to_string()
@@ -839,6 +868,10 @@ impl App {
             favorites_selected: 0,
             history: persisted.history,
             history_selected: 0,
+            library: library_tracks,
+            library_selected: 0,
+            library_scanning: false,
+            library_paths,
             playlists: persisted.playlists,
             playlist_selected: 0,
             downloads,
@@ -912,6 +945,9 @@ impl App {
             dirty_since: None,
         };
 
+        if app.library.is_empty() && !app.library_paths.is_empty() {
+            app.start_library_scan();
+        }
         if !installed_defaults.is_empty() {
             app.flash(format!(
                 "installed default plugins: {}",
@@ -1107,6 +1143,10 @@ impl App {
             }
             KeyCode::Char('7') => {
                 self.switch_view(View::History);
+                return;
+            }
+            KeyCode::Char('8') => {
+                self.switch_view(View::Library);
                 return;
             }
             _ => {}
@@ -1895,6 +1935,19 @@ impl App {
                             self.artwork_track_id = None;
                         }
                     }
+                }
+            }
+            AppEvent::LibraryDone { tracks, error } => {
+                self.library_scanning = false;
+                if let Some(error) = error {
+                    self.flash(format!("library scan failed: {error}"));
+                } else {
+                    let count = tracks.len();
+                    self.library = tracks;
+                    self.library_selected = 0;
+                    let _ = library::save_cache(&self.library);
+                    self.flash(format!("library: {count} local tracks"));
+                    self.mark_dirty();
                 }
             }
             AppEvent::LyricsDone { track_id, result } => match result {
@@ -3012,6 +3065,7 @@ impl App {
             View::Downloads => self.downloads_selected = index,
             View::Plugins => self.plugin_selected = index,
             View::History => self.history_selected = index,
+            View::Library => self.library_selected = index,
             View::Browse => {
                 if let Some(page) = self.browse_stack.last_mut() {
                     page.selected = index;
@@ -3324,6 +3378,29 @@ impl App {
         self.pending_seek = start_at;
         self.mark_dirty();
         self.start_stream(track);
+    }
+
+    fn start_library_scan(&mut self) {
+        if self.library_paths.is_empty() {
+            self.flash("set library_paths in config.toml to scan local music");
+            return;
+        }
+        if self.library_scanning {
+            return;
+        }
+        self.library_scanning = true;
+        self.status = "scanning local library…".to_string();
+        let paths = self.library_paths.clone();
+        let tx = self.events_tx.clone();
+        let _ = thread::Builder::new()
+            .name("library-scan".to_string())
+            .spawn(move || {
+                let tracks = library::scan(&paths);
+                let _ = tx.send(AppEvent::LibraryDone {
+                    tracks,
+                    error: None,
+                });
+            });
     }
 
     fn request_artwork(&mut self, track: &Track) {
@@ -3898,6 +3975,7 @@ impl App {
             View::Downloads => self.download_tracks(),
             View::Plugins => Vec::new(),
             View::History => self.history_tracks(),
+            View::Library => self.library.clone(),
         }
     }
 
@@ -4076,6 +4154,12 @@ impl App {
                 if let Some(entry) = self.history.get(self.history_selected) {
                     let track = entry.track.clone();
                     let context = self.history_tracks();
+                    self.play_with_context(track, context);
+                }
+            }
+            View::Library => {
+                if let Some(track) = self.library.get(self.library_selected).cloned() {
+                    let context = self.library.clone();
                     self.play_with_context(track, context);
                 }
             }
@@ -4541,6 +4625,7 @@ impl App {
                 self.flash("history is already newest-first — use j/k");
                 return;
             }
+            View::Library => FilterKind::Library,
             View::Browse => {
                 self.flash("go back to search to filter results");
                 return;
@@ -4567,6 +4652,7 @@ impl App {
                 .get(index)
                 .map(|playlist| playlist.tracks.as_slice())
                 .unwrap_or(&[]),
+            FilterKind::Library => &self.library,
         }
     }
 
@@ -4647,6 +4733,8 @@ impl App {
             PaletteAction::ViewDownloads => self.switch_view(View::Downloads),
             PaletteAction::ViewPlugins => self.switch_view(View::Plugins),
             PaletteAction::ViewHistory => self.switch_view(View::History),
+            PaletteAction::ViewLibrary => self.switch_view(View::Library),
+            PaletteAction::RescanLibrary => self.start_library_scan(),
             PaletteAction::ShowStats => self.overlay = Some(Overlay::Stats),
             PaletteAction::NewPlaylist => {
                 self.pending_playlist_tracks.clear();
@@ -4910,6 +4998,10 @@ impl App {
                 self.history_selected =
                     step_index(self.history_selected, delta, self.history.len());
             }
+            View::Library => {
+                self.library_selected =
+                    step_index(self.library_selected, delta, self.library.len());
+            }
         }
     }
 
@@ -4933,6 +5025,7 @@ impl App {
             View::Downloads => self.downloads_selected = 0,
             View::Plugins => self.plugin_selected = 0,
             View::History => self.history_selected = 0,
+            View::Library => self.library_selected = 0,
         }
     }
 
@@ -4962,6 +5055,7 @@ impl App {
             }
             View::Plugins => self.plugin_selected = self.plugin_entries().len().saturating_sub(1),
             View::History => self.history_selected = self.history.len().saturating_sub(1),
+            View::Library => self.library_selected = self.library.len().saturating_sub(1),
         }
     }
 
@@ -5008,6 +5102,7 @@ impl App {
                 .history
                 .get(self.history_selected)
                 .map(|entry| entry.track.clone()),
+            View::Library => self.library.get(self.library_selected).cloned(),
             View::Plugins => None,
         }
     }
@@ -5175,6 +5270,7 @@ impl App {
                 self.plugins.refresh();
                 self.flash("plugin registry refreshed");
             }
+            View::Library => self.start_library_scan(),
             View::Browse => {
                 if let Some(page) = self.browse_stack.last() {
                     let (command, argument) = if page.kind == BrowseKind::Artist {

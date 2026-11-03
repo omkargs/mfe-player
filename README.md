@@ -53,6 +53,7 @@ This is **MFE Player** — **M**usic **F**or **E**veryone.
 | **Playback speed** | `[` / `]` for 0.5×–2.0×, `\` to reset. Podcasts, mixes and 10-hour loops welcome. |
 | **M3U import/export** | `Alt+E` / `Alt+I` so your playlists can escape this app too. |
 | **History & stats** | Every play is remembered (`7`). `Ctrl+G` shows listening time, top artists and most-played tracks. |
+| **Your own files** | Point `library_paths` at real folders and press `8`. Tags and embedded cover art are read with `lofty`; no upload, no account, no phoning home. |
 
 ---
 
@@ -132,6 +133,7 @@ Press `?` inside the app for the full, searchable map. The ones you'll actually 
 | `Alt+E` · `Alt+I` | Export · import M3U |
 | `d` · `5` | Download · downloads view |
 | `7` · `Ctrl+G` | Listening history · listening stats |
+| `8` · `R` | Local library · rescan folders |
 | `Ctrl+L` | Import song/playlist from a link |
 | `Ctrl+T` | Toggle radio autoplay |
 | `Ctrl+V` | Toggle cava spectrum |
@@ -268,6 +270,7 @@ normalize = false
 eq = "flat"               # flat | bass | vocal | night | loud
 audio_device = ""         # e.g. "alsa/hdmi:CARD=HDMI"
 mpris = true
+library_paths = ["~/Music"]   # scanned on launch; press R in the library view to rescan
 ```
 
 | Path | What lives there |
@@ -276,6 +279,8 @@ mpris = true
 | `~/.config/mfe-player/state.json` | queue, playlists, favorites, position |
 | `~/.config/mfe-player/plugins/` | provider plugins |
 | `~/.cache/mfe-player/downloads/` | offline audio |
+| `~/.config/mfe-player/library.json` | local library index |
+| `~/.cache/mfe-player/artwork/` | downloaded and embedded cover cache |
 | `~/.config/mfe-player/mfe-player.m3u` | exported playlists |
 
 ---

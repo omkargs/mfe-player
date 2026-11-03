@@ -209,6 +209,7 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
             View::Downloads => app.downloads.len(),
             View::Plugins => app.plugin_entries().len(),
             View::History => app.history.len(),
+            View::Library => app.library.len(),
             View::Browse => app
                 .browse_page()
                 .map(|page| page.albums.len() + page.tracks.len())
@@ -459,6 +460,15 @@ fn draw_main(frame: &mut Frame, app: &mut App, area: Rect) {
             " ◷ history · {} plays · Enter replay · Ctrl+G stats ",
             app.history.len()
         ),
+        View::Library => format!(
+            " ♫ local library · {} tracks{} · R rescan ",
+            app.library.len(),
+            if app.library_scanning {
+                " · scanning…"
+            } else {
+                ""
+            }
+        ),
         View::Browse => app
             .browse_page()
             .map(|page| format!(" {} · {} ", page.title, page.subtitle))
@@ -481,6 +491,7 @@ fn draw_main(frame: &mut Frame, app: &mut App, area: Rect) {
         View::Downloads => draw_downloads(frame, app, inner),
         View::Plugins => draw_plugins(frame, app, inner),
         View::History => draw_history(frame, app, inner),
+        View::Library => draw_library(frame, app, inner),
         View::Browse => draw_browse(frame, app, inner),
     }
 }
@@ -1206,6 +1217,45 @@ fn draw_downloads(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 }
 
+fn draw_library(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.library_scanning && app.library.is_empty() {
+        draw_empty(
+            frame,
+            area,
+            "Scanning your local library…",
+            "Reading tags and embedded artwork. Large collections take a moment.",
+        );
+        return;
+    }
+    if app.library.is_empty() {
+        draw_empty(
+            frame,
+            area,
+            "No local music indexed.",
+            "Add folders to library_paths in config.toml, then press R to scan.",
+        );
+        return;
+    }
+    let now_id = app.now_playing.as_ref().map(|track| track.id.as_str());
+    let hits = render_track_list(
+        frame,
+        area,
+        &app.library,
+        app.library_selected,
+        now_id,
+        |track| app.is_favorite(&track.id),
+        |track| app.marked.contains_key(&track.id),
+        false,
+    );
+    app.record_hits(
+        area,
+        0,
+        hits.into_iter()
+            .map(|(index, line)| (line, HitAction::Select(View::Library, index)))
+            .collect(),
+    );
+}
+
 fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.history.is_empty() {
         draw_empty(
@@ -1828,6 +1878,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         View::History => {
             "Enter replay · a queue · v mark · Ctrl+G stats · 7 history · ? help · q quit"
         }
+        View::Library => {
+            "Enter play · a queue · A queue all · v mark · / filter · R rescan · 8 library · ? help"
+        }
         View::Browse => {
             "Esc/h back · Enter open/play · p play all · a/A queue · d download · v mark · N next · l like · y lyrics · R reload"
         }
@@ -1966,6 +2019,8 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("d", "download the selection for offline playback"),
         key("5", "downloads view · Enter plays the local file"),
         key("7", "listening history · Enter replays a track"),
+        key("8", "local library · Enter plays your own files"),
+        key("R", "rescan library folders after adding music"),
         key("Ctrl+G", "listening stats: plays, time, top artists"),
         key("Ctrl+T", "radio: keep finding related tracks"),
         key("Ctrl+L", "import songs / a playlist from a link"),
@@ -2138,6 +2193,7 @@ fn draw_filter(
             .get(index)
             .map(|playlist| playlist.name.as_str())
             .unwrap_or("playlist"),
+        FilterKind::Library => "local library",
     };
     let popup = centered(area, 74, 72);
     frame.render_widget(Clear, popup);

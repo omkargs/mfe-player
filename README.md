@@ -12,23 +12,36 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-7ee787.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-f74c00.svg)](https://www.rust-lang.org)
 
-[Why](#-the-2am-origin-story) · [Features](#-what-you-actually-get) · [Install](#-install-it) · [Keys](#-hotkeys) · [Themes](#-themes) · [Plugins](#-plugins-are-just-python) · [Roadmap](#-roadmap)
+[The rant](#-the-rant) · [Features](#-what-you-actually-get) · [Install](#-install-it) · [Keys](#-hotkeys) · [Themes](#-themes) · [Plugins](#-plugins-are-just-python) · [Roadmap](#-roadmap)
 
 </div>
 
 ---
 
-## ☕ The 2 a.m. origin story
+## 😤 The rant
 
-I was paying for a music subscription, a "hi-fi" add-on, and somehow still getting ads for a product I already bought. The desktop app used more RAM than my editor, my browser and my whole dev environment combined. Every time I wanted to play one song, I had to leave the terminal, find a window, wait for a spinner, and pretend this was a good experience.
+I'm going to be honest with you: I built this because I got tired of being farmed.
 
-Then I thought: **I already live in the terminal. Why doesn't my music?**
+I was paying for a music subscription. Then a "lossless" add-on. Then a family plan I didn't need. And after all that, the app still had ads — for the same service — and one song required three taps, two spinners and a page reload. The desktop client sat there using more RAM than my editor, my browser and my whole dev environment combined, to play a 4 MB MP3.
 
-So I built it. Rust + `ratatui` + `mpv` + Python plugins. It started as a "can I search and play a song without opening a browser" experiment. Then came the queue, favourites, playlists, lyrics, radio, downloads, MPRIS, a cava spectrum panel, and a background daemon that refuses to die when your SSH session does.
+At some point I looked at my terminal, where I already live, and thought: **why is my music not here?**
 
-No account. No telemetry. No "sign in to continue listening". Just a search box, your music, and every key you need.
+Not "why isn't there a web player I can embed". Not "why isn't there a plugin for VS Code". Why is the one place I spend ten hours a day the *only* place I can't hit space and hear a song?
 
-This is **MFE Player** — **M**usic **F**or **E**veryone.
+So I built it. Rust + `ratatui` + `mpv` + Python plugins. It started as "can I search and play a song without opening a browser". Then the queue showed up. Then favourites, playlists, lyrics, radio, downloads, MPRIS, a cava panel that actually moves to the audio, and a background daemon that keeps playing when your SSH session drops.
+
+Some things I got tired of, specifically:
+
+- **"Your music, anywhere."** Except on the one device I use.
+- **Region locks** on songs that are, somehow, available for free elsewhere.
+- **Hi-Fi tiers** so I can hear the ads in higher fidelity.
+- **"Sign in to continue listening"** — to music I already paid for.
+- **$11.99 a month**, forever, for a library I could have ripped in 2006 and owned.
+- **40 GB of RAM** for a UI that needs one text box and a play button.
+
+No account. No telemetry. No "recommended for you" — I know what I want to listen to, that's why I searched for it. No dark patterns. Just a search box, your music, and every key you need.
+
+This is **MFE Player** — **M**usic **F**or **E**veryone. It's MIT-licensed, it's a terminal app, and it does not give a single shit about your engagement metrics.
 
 > If this saves you one subscription, one laggy tab, or one "sorry, this content is not available in your region", that's the whole point.
 
@@ -58,8 +71,9 @@ This is **MFE Player** — **M**usic **F**or **E**veryone.
 | **Share without an account** | `Y` (or `mfe share`) copies the current track to your clipboard. No OAuth, no social graph, no "sign in to continue". |
 | **History & stats** | Every play is remembered (`7`). `Ctrl+G` shows listening time, top artists and most-played tracks. |
 | **Your own files** | Point `library_paths` at real folders and press `8`. Tags and embedded cover art are read with `lofty`; no upload, no account, no phoning home. |
-| **Internet Archive** | A second metadata plugin searches 800 years of free music, live sets and public-domain recordings on archive.org. |
+| **Internet Archive** | A metadata plugin searches 800 years of free music, live sets and public-domain recordings on archive.org. |
 | **Radio Browser** | Search live stations worldwide with the `Radio` plugin and pipe them straight into mpv (ICY metadata and all). |
+| **Free of charge, forever** | MIT license. One binary, roughly the size of a single album cover, and it never asks for a credit card. |
 
 ---
 
@@ -84,7 +98,7 @@ Terminal font does the rest. It looks even better with a real cava panel on the 
 
 ## 🛠 Install it
 
-You need **Linux** (mpv talks over Unix sockets), **Rust 1.85+**, **mpv**, **yt-dlp** and **python3**.
+Right now this is **Linux** software (mpv talks over Unix sockets). macOS is mostly there and Windows is on the roadmap, honestly. You need **Rust 1.85+**, **mpv**, **yt-dlp** and **python3**.
 
 ```bash
 # Debian / Ubuntu
@@ -111,6 +125,8 @@ mfe stop                # stop playback and the daemon
 ```
 
 First launch writes sane defaults to `~/.config/mfe-player/` and installs the bundled plugins. It also migrates an old `nuclear-tui` config automatically, because losing your queue to a rename is a crime.
+
+If you just want the prebuilt binary, grab the tarball from [Releases](https://github.com/omkargs/mfe-player/releases).
 
 ---
 
@@ -169,7 +185,7 @@ mfe             # reattach the full UI right where playback is
 mfe stop        # kill the music (and the daemon)
 ```
 
-That's also why `repeat one` and radio now survive in the background instead of quietly dying after one track.
+That's also why `repeat one` and radio survive in the background instead of quietly dying after one track. Yes, that bug annoyed me enough to build a whole daemon about it.
 
 ---
 
@@ -221,7 +237,7 @@ Set one permanently:
 theme = "tokyo-night"
 ```
 
-No theme fits? Copy `src/theme.rs`, add 13 colours, open a PR. It's genuinely that small.
+No theme fits? Copy `src/theme.rs`, add 13 colours, open a PR. It's genuinely that small. Code contributions that make the terminal look less like 1998 are extremely welcome.
 
 ---
 
@@ -231,11 +247,13 @@ Drop a `.py` file into `~/.config/mfe-player/plugins/`. It gets discovered, load
 
 The bundled ones:
 
-- **metadata** — iTunes Search API, MusicBrainz
-- **streaming** — YouTube (`yt-dlp`), SoundCloud (`yt-dlp`)
+- **metadata** — iTunes Search API, MusicBrainz, Internet Archive, Radio Browser
+- **streaming** — YouTube (`yt-dlp`), SoundCloud (`yt-dlp`), Internet Archive, Radio Browser
 - **lyrics** — LRCLIB with a lyrics.ovh fallback
 
 If one provider rate-limits you, MFE fails over to the next plugin instead of showing you a spinner forever. Adding a new source is a JSON contract, not a framework.
+
+The trick, if you want to build one: your plugin prints JSON. That's it. `main.py search '<query>'` returns `{"artists":[],"albums":[],"tracks":[...]}`, and `main.py resolve '<track-json>'` returns `{"url":"...","extractor":"..."}`. If it works in a terminal, it works in MFE.
 
 ---
 
@@ -284,6 +302,7 @@ replaygain = "off"        # off | track | album
 eq_gains = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 mpris = true
 library_paths = ["~/Music"]   # scanned on launch; press R in the library view to rescan
+listenbrainz_token = ""       # optional; empty = nothing ever leaves your machine
 ```
 
 | Path | What lives there |
@@ -309,12 +328,18 @@ Want scrobbles without handing over a social graph? Paste a ListenBrainz user to
 - [x] Sleep timer with fade-out
 - [x] Background daemon with working repeat/queue
 - [x] 12 themes and playback speed
-- [ ] Crossfade between tracks
-- [ ] Scrobbling plugin (ListenBrainz / Last.fm)
-- [ ] Windows/macOS named-pipe transport
+- [x] Smart fade and ReplayGain
+- [x] Editable 10-band EQ
+- [x] ListenBrainz scrobbling
+- [x] Internet Archive and Radio Browser sources
+- [x] Local library and album art
+- [ ] macOS support (copy paths, `/proc` replacement)
+- [ ] Windows named-pipe transport
+- [ ] Terminal transparency / background blur support
+- [ ] Last.fm scrobbling plugin
 - [ ] Plugin marketplace UI
 
-PRs for any unchecked box are welcome. So are issues that start with "this broke at 3 a.m." — those are usually the real ones.
+PRs for any unchecked box are welcome. So are issues that start with "this broke at 3 a.m." — those are usually the real ones. And if you're here to tell me a desktop app would be nicer: no it wouldn't, and also I'm broke.
 
 ---
 

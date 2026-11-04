@@ -4,6 +4,7 @@ mod audio;
 mod cava;
 mod config;
 mod daemon;
+mod ipc;
 mod library;
 mod models;
 mod mpris;

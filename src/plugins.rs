@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -287,9 +288,12 @@ impl PluginRegistry {
         let entry_path = dir.join(&bundled.manifest.entry);
         fs::write(&entry_path, bundled.script)
             .with_context(|| format!("writing {}", entry_path.display()))?;
-        let mut permissions = fs::metadata(&entry_path)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&entry_path, permissions)?;
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&entry_path)?.permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&entry_path, permissions)?;
+        }
 
         let manifest_path = dir.join("plugin.json");
         fs::write(
@@ -381,7 +385,17 @@ pub fn run_plugin(plugin: &InstalledPlugin, args: &[String], timeout: Duration) 
         command.arg(&entry);
         command
     } else {
-        Command::new(&entry)
+        #[cfg(windows)]
+        {
+            // Windows has no shebangs: run the script through Python.
+            let mut command = Command::new("python3");
+            command.arg(&entry);
+            command
+        }
+        #[cfg(not(windows))]
+        {
+            Command::new(&entry)
+        }
     };
     command
         .args(args)

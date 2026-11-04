@@ -9,8 +9,6 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -21,15 +19,17 @@ use serde_json::json;
 
 use crate::app::App;
 use crate::config;
+use crate::ipc;
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
+#[cfg(unix)]
 extern "C" fn on_signal(_: libc::c_int) {
     SHUTDOWN.store(true, Ordering::SeqCst);
 }
 
 fn pid_alive(pid: u32) -> bool {
-    pid != 0 && std::path::Path::new(&format!("/proc/{pid}")).exists()
+    ipc::pid_alive(pid)
 }
 
 pub fn running_pid() -> Option<u32> {
@@ -63,14 +63,7 @@ pub fn spawn_background() -> Result<()> {
     } else {
         command.stderr(Stdio::null());
     }
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    ipc::detach(&mut command);
     command.spawn().context("starting the background daemon")?;
     Ok(())
 }
@@ -82,17 +75,13 @@ pub fn stop_background() {
         let _ = fs::remove_file(config::daemon_pid_path());
         return;
     };
-    unsafe {
-        libc::kill(pid as libc::pid_t, libc::SIGTERM);
-    }
+    ipc::terminate(pid);
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline && pid_alive(pid) {
         thread::sleep(Duration::from_millis(40));
     }
     if pid_alive(pid) {
-        unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGKILL);
-        }
+        ipc::kill(pid);
     }
     let _ = fs::remove_file(config::daemon_pid_path());
 }
@@ -130,6 +119,7 @@ pub fn takeover() {
 pub fn run() -> Result<()> {
     config::ensure_dirs()?;
     let _ = fs::write(config::daemon_pid_path(), std::process::id().to_string());
+    #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
         libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
@@ -171,7 +161,7 @@ pub fn run() -> Result<()> {
 
 /// Send one command to the running mpv over its IPC socket.
 pub fn mpv_command(command: serde_json::Value) -> Result<()> {
-    let mut stream = UnixStream::connect(config::mpv_socket_path())
+    let mut stream = ipc::connect(&config::mpv_socket_path())
         .context("no running player found (start mfe-player first)")?;
     writeln!(stream, "{}", json!({ "command": command }))?;
     stream.flush()?;
@@ -182,13 +172,8 @@ pub fn mpv_command(command: serde_json::Value) -> Result<()> {
 /// integrations (waybar, polybar, tmux) where the state file can be a second
 /// behind the actual playback position.
 pub fn mpv_property(name: &str) -> Option<serde_json::Value> {
-    let mut stream = UnixStream::connect(config::mpv_socket_path()).ok()?;
-    stream
-        .set_read_timeout(Some(Duration::from_millis(500)))
-        .ok()?;
-    stream
-        .set_write_timeout(Some(Duration::from_millis(500)))
-        .ok()?;
+    let mut stream = ipc::connect(&config::mpv_socket_path()).ok()?;
+    ipc::set_timeouts(&stream, Duration::from_millis(500));
     writeln!(
         stream,
         "{}",
@@ -323,7 +308,7 @@ pub fn status_line() -> String {
         .unwrap_or_else(|| "nothing playing".to_string());
     let mode = if is_running() {
         "background daemon"
-    } else if UnixStream::connect(config::mpv_socket_path()).is_ok() {
+    } else if ipc::connect(&config::mpv_socket_path()).is_ok() {
         "attached session"
     } else {
         "stopped"

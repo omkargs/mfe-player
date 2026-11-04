@@ -7,8 +7,21 @@ on:
 
 jobs:
   build:
-    name: build & test
-    runs-on: ubuntu-latest
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            experimental: false
+          - os: macos-latest
+            experimental: false
+          # Windows support is wired through a named-pipe IPC layer but has not
+          # been exercised by a maintainer on real hardware yet.
+          - os: windows-latest
+            experimental: true
     steps:
       - uses: actions/checkout@v4
 

@@ -61,6 +61,12 @@ fn copy_dir(from: &PathBuf, to: &PathBuf) -> std::io::Result<()> {
 }
 
 fn dirs_config_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    if let Ok(appdata) = env::var("APPDATA") {
+        if !appdata.trim().is_empty() {
+            return Some(PathBuf::from(appdata));
+        }
+    }
     if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
         if !xdg.trim().is_empty() {
             return Some(PathBuf::from(xdg));
@@ -86,6 +92,19 @@ pub fn mpv_log_path() -> PathBuf {
 }
 
 pub fn cache_dir() -> PathBuf {
+    #[cfg(windows)]
+    if let Ok(local) = env::var("LOCALAPPDATA") {
+        if !local.trim().is_empty() {
+            return PathBuf::from(local).join("mfe-player");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join("Library")
+            .join("Caches")
+            .join("mfe-player");
+    }
     if let Ok(xdg) = env::var("XDG_CACHE_HOME") {
         if !xdg.trim().is_empty() {
             return PathBuf::from(xdg).join("mfe-player");
@@ -114,12 +133,30 @@ pub fn runtime_dir() -> PathBuf {
             return PathBuf::from(xdg).join("mfe-player");
         }
     }
-    let user = env::var("USER").unwrap_or_else(|_| "user".to_string());
+    let user = env::var("USER")
+        .or_else(|_| env::var("USERNAME"))
+        .unwrap_or_else(|_| "user".to_string());
     env::temp_dir().join(format!("mfe-player-{user}"))
 }
 
+#[cfg(windows)]
+fn user_name() -> String {
+    env::var("USER")
+        .or_else(|_| env::var("USERNAME"))
+        .unwrap_or_else(|_| "user".to_string())
+}
+
+/// mpv listens on a Unix socket everywhere except Windows, where it exposes
+/// a named pipe instead.
 pub fn mpv_socket_path() -> PathBuf {
-    runtime_dir().join("mpv.sock")
+    #[cfg(windows)]
+    {
+        return PathBuf::from(format!(r"\\.\pipe\mfe-player-{}", user_name()));
+    }
+    #[cfg(not(windows))]
+    {
+        runtime_dir().join("mpv.sock")
+    }
 }
 
 /// Records which TUI session owns the shared mpv instance. A second,
@@ -139,7 +176,14 @@ pub fn daemon_log_path() -> PathBuf {
 }
 
 pub fn private_mpv_socket_path(pid: u32) -> PathBuf {
-    runtime_dir().join(format!("mpv-{pid}.sock"))
+    #[cfg(windows)]
+    {
+        return PathBuf::from(format!(r"\\.\pipe\mfe-player-{}-{pid}", user_name()));
+    }
+    #[cfg(not(windows))]
+    {
+        runtime_dir().join(format!("mpv-{pid}.sock"))
+    }
 }
 
 fn default_true() -> bool {

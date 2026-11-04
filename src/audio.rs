@@ -1,7 +1,5 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -12,6 +10,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 
 use crate::config;
+use crate::ipc::{self, Connection};
 use crate::models::StreamInfo;
 
 #[derive(Debug, Clone, Default)]
@@ -28,7 +27,7 @@ pub struct AudioSnapshot {
 
 pub struct AudioEngine {
     child: Option<Child>,
-    writer: Arc<Mutex<UnixStream>>,
+    writer: Arc<Mutex<Connection>>,
     snapshot: Arc<Mutex<AudioSnapshot>>,
     socket_path: PathBuf,
     attached: bool,
@@ -38,7 +37,7 @@ pub struct AudioEngine {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    pid != std::process::id() && Path::new(&format!("/proc/{pid}")).exists()
+    ipc::pid_alive(pid)
 }
 
 fn session_owner() -> Option<u32> {
@@ -380,16 +379,8 @@ fn spawn_mpv(socket_path: &Path, volume: f64, audio_device: &str) -> Result<Chil
         command.stderr(Stdio::null());
     }
 
-    // Put mpv in its own session so closing the terminal (or tmux pane) does not
-    // SIGHUP the audio process when the TUI detaches in background mode.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    // Detach mpv from the terminal so closing the pane does not kill playback.
+    ipc::detach(&mut command);
 
     command.spawn().map_err(|err| {
         anyhow!(
@@ -398,10 +389,10 @@ fn spawn_mpv(socket_path: &Path, volume: f64, audio_device: &str) -> Result<Chil
     })
 }
 
-fn wait_for_socket(socket_path: &Path) -> Result<UnixStream> {
+fn wait_for_socket(socket_path: &Path) -> Result<Connection> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if let Ok(stream) = UnixStream::connect(socket_path) {
+        if let Ok(stream) = ipc::connect(socket_path) {
             return Ok(stream);
         }
         if Instant::now() >= deadline {
@@ -415,10 +406,9 @@ fn wait_for_socket(socket_path: &Path) -> Result<UnixStream> {
     }
 }
 
-fn probe_socket(path: &Path) -> Result<UnixStream> {
-    let mut stream = UnixStream::connect(path)?;
-    stream.set_read_timeout(Some(Duration::from_millis(700)))?;
-    stream.set_write_timeout(Some(Duration::from_millis(700)))?;
+fn probe_socket(path: &Path) -> Result<Connection> {
+    let mut stream = ipc::connect(path)?;
+    ipc::set_timeouts(&stream, Duration::from_millis(700));
     writeln!(
         stream,
         "{}",
@@ -435,8 +425,7 @@ fn probe_socket(path: &Path) -> Result<UnixStream> {
             Ok(_) => {
                 if let Ok(value) = serde_json::from_str::<Value>(&line) {
                     if value.get("request_id").and_then(Value::as_u64) == Some(991) {
-                        stream.set_read_timeout(None)?;
-                        stream.set_write_timeout(None)?;
+                        ipc::clear_timeouts(&stream);
                         return Ok(stream);
                     }
                 }
@@ -453,7 +442,7 @@ fn probe_socket(path: &Path) -> Result<UnixStream> {
     Err(anyhow!("stale mpv socket"))
 }
 
-fn read_events(stream: UnixStream, snapshot: Arc<Mutex<AudioSnapshot>>) {
+fn read_events(stream: Connection, snapshot: Arc<Mutex<AudioSnapshot>>) {
     let reader = BufReader::new(stream);
     for line in reader.lines() {
         let Ok(line) = line else { break };

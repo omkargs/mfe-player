@@ -54,11 +54,12 @@ fn pipe_to(program: &str, args: &[&str], text: &str) -> Result<()> {
 /// Copy text to whichever clipboard the session actually has. Wayland first,
 /// then X11, then macOS. Returns the tool that worked.
 pub fn copy(text: &str) -> Result<&'static str> {
-    let candidates: [(&str, &[&str]); 4] = [
+    let candidates: [(&str, &[&str]); 5] = [
         ("wl-copy", &[]),
         ("xclip", &["-selection", "clipboard"]),
         ("xsel", &["--clipboard", "--input"]),
         ("pbcopy", &[]),
+        ("clip", &[]),
     ];
     let mut last_error = None;
     for (program, args) in candidates {

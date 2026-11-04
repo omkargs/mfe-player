@@ -101,7 +101,9 @@ Terminal font does the rest. It looks even better with a real cava panel on the 
 
 ## 🛠 Install it
 
-Right now this is **Linux** software (mpv talks over Unix sockets). macOS is mostly there and Windows is on the roadmap, honestly. You need **Rust 1.85+**, **mpv**, **yt-dlp** and **python3**.
+**Linux** is the tested target. **macOS** builds in CI and uses the same Unix-socket transport. **Windows** is wired up too — mpv speaks named pipes and the IPC layer now handles that — but it is marked experimental until someone runs it on real hardware and tells me what broke.
+
+You need **Rust 1.85+**, **mpv**, **yt-dlp** and **python3**.
 
 ```bash
 # Debian / Ubuntu
@@ -354,9 +356,10 @@ The rest is a real plan, roughly in build order.
 - [ ] Full-screen now-playing view with big art and karaoke lyrics.
 
 ### Phase 2 — stop it breaking outside my laptop
-- [ ] macOS: replace the `/proc` pid check, native Application Support paths, CI build.
-- [ ] Windows: named-pipe mpv transport (`src/ipc.rs`), detach flags, `clip` clipboard, CI build. mpv already speaks named pipes, so the protocol does not change.
-- [ ] CI matrix for Linux/macOS/Windows so "works on my machine" stops being the test plan.
+- [x] macOS: `/proc` replaced with `kill(pid, 0)`, native cache paths, CI build.
+- [x] Windows: named-pipe mpv transport (`src/ipc.rs`), detach flags, `clip` clipboard, Python plugin launch, CI build (experimental).
+- [x] CI matrix for Linux/macOS/Windows so "works on my machine" stops being the test plan.
+- [ ] Platform media controls: SMTC on Windows, Now Playing on macOS (MPRIS is Linux-only).
 
 ### Phase 3 — installable, and able to diagnose itself
 - [ ] `mfe doctor` — checks mpv, yt-dlp, python3, socket, config and clipboard, then prints the exact fix.

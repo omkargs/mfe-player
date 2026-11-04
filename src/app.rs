@@ -6017,10 +6017,12 @@ fn unique_playlist_name(base: &str, playlists: &[Playlist]) -> String {
 }
 
 fn clipboard_text() -> Option<String> {
-    let attempts: [(&str, &[&str]); 3] = [
+    let attempts: [(&str, &[&str]); 5] = [
         ("wl-paste", &["--no-newline"]),
         ("xclip", &["-selection", "clipboard", "-o"]),
         ("xsel", &["-b", "-o"]),
+        ("pbpaste", &[]),
+        ("powershell", &["-NoProfile", "-Command", "Get-Clipboard"]),
     ];
     for (command, args) in attempts {
         let Ok(output) = std::process::Command::new(command).args(args).output() else {

@@ -38,6 +38,12 @@
 - **Aesthetic pass:** rounded borders on every panel and popup, a truecolor
   gradient header logo, and an eighth-block progress bar with a gradient fill
   and a smooth head instead of a flat gauge.
+- **Portable transport:** mpv IPC now sits behind `src/ipc.rs` — Unix sockets
+  on Linux/macOS, named pipes on Windows. Process liveness uses `kill(pid, 0)`
+  instead of `/proc`, paths honour `APPDATA`/`LOCALAPPDATA`/`Library/Caches`,
+  plugins run through `python3` where there are no shebangs, and the clipboard
+  probes `pbpaste`/`clip` too. CI now builds Linux, macOS and (experimental)
+  Windows.
 
 ## v0.2.0 — Music For Everyone
 

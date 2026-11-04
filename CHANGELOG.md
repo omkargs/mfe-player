@@ -38,6 +38,9 @@
 - **Aesthetic pass:** rounded borders on every panel and popup, a truecolor
   gradient header logo, and an eighth-block progress bar with a gradient fill
   and a smooth head instead of a flat gauge.
+- **Artwork cache eviction:** covers are now tracked by access time and the
+  least-recently-used files are deleted once the cache passes 128 MiB
+  (override with `MFE_ARTWORK_CACHE_MB`). `mfe cache` shows the limit.
 - **`mfe update`:** asks GitHub for the latest release, compares it
   numerically and on Unix replaces the running binary from the platform
   tarball. `--check` reports without touching anything; offline or weird

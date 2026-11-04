@@ -255,6 +255,7 @@ mfe share                   # copy now playing to the clipboard
 mfe toggle                  # pause/resume
 mfe completions bash        # also: zsh, fish
 mfe doctor                  # why is the audio not playing?
+mfe cache                   # sizes + the cache limit
 mfe cache clean             # free the artwork cache
 mfe update                  # grab the latest release (--check to only look)
 ```
@@ -397,7 +398,7 @@ The rest is a real plan, roughly in build order.
 - [x] `install.sh` (animated, installs deps, runs doctor), AUR `PKGBUILD`, Nix flake, Homebrew formula template and a systemd unit.
 - [x] npm/bun (`optionalDependencies`), pip/pipx/uv wheels via maturin, crates.io, all fed by one release workflow.
 - [x] `mfe update` (self-replaces from the release tarball; `--check` for scripts).
-- [ ] LRU eviction for the artwork cache.
+- [x] LRU eviction for the artwork cache (128 MiB, oldest covers go first).
 - [ ] A `vhs` demo GIF for this README, because a wall of text is not a demo.
 
 ### Phase 4 — social, on your terms

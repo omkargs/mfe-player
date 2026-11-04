@@ -103,6 +103,10 @@ fn main() -> Result<()> {
                         config::downloads_dir().display(),
                         human_size(dir_size(&config::downloads_dir()))
                     );
+                    println!(
+                        "limit: {} (least-recently-used covers go first · MFE_ARTWORK_CACHE_MB overrides)",
+                        human_size(artwork::cache_limit())
+                    );
                     println!("run `mfe cache clean` to clear the artwork cache");
                 }
             }

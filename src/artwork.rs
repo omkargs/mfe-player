@@ -6,8 +6,9 @@
 //! in any modern terminal.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context, Result};
 
@@ -42,9 +43,73 @@ fn cached(url: &str) -> PathBuf {
     config::artwork_dir().join(hash(url))
 }
 
-fn fetch(url: &str, target: &PathBuf) -> Result<()> {
+/// Covers are small, but a library can add up. Keep the cache useful instead
+/// of letting it grow forever; override with MFE_ARTWORK_CACHE_MB.
+const DEFAULT_CACHE_MB: u64 = 128;
+
+pub fn cache_limit() -> u64 {
+    std::env::var("MFE_ARTWORK_CACHE_MB")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CACHE_MB)
+        * 1024
+        * 1024
+}
+
+fn touch(path: &Path) {
+    if let Ok(file) = fs::OpenOptions::new().write(true).open(path) {
+        let _ = file.set_modified(SystemTime::now());
+    }
+}
+
+fn enforce_limit() {
+    let _ = evict(&config::artwork_dir(), cache_limit());
+}
+
+/// Delete the oldest files until the directory is back under 90% of `limit`.
+/// Returns the number of bytes freed. Best effort: a file that cannot be
+/// removed is skipped rather than failing playback.
+fn evict(dir: &Path, limit: u64) -> u64 {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut files: Vec<(SystemTime, u64, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let meta = entry.metadata().ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            let age = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            Some((age, meta.len(), path))
+        })
+        .collect();
+
+    let mut total: u64 = files.iter().map(|(_, size, _)| *size).sum();
+    if total <= limit {
+        return 0;
+    }
+
+    files.sort_by_key(|(age, _, _)| *age);
+    let target = limit / 10 * 9;
+    let mut freed = 0;
+    for (_, size, path) in files {
+        if total <= target {
+            break;
+        }
+        if fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(size);
+            freed += size;
+        }
+    }
+    freed
+}
+
+fn fetch(url: &str, target: &PathBuf) -> Result<bool> {
     if target.exists() && fs::metadata(target).map(|m| m.len() > 64).unwrap_or(false) {
-        return Ok(());
+        return Ok(false);
     }
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
@@ -53,7 +118,7 @@ fn fetch(url: &str, target: &PathBuf) -> Result<()> {
         let local = url.strip_prefix("file://").unwrap_or(url);
         if std::path::Path::new(local).exists() {
             fs::copy(local, target)?;
-            return Ok(());
+            return Ok(true);
         }
         return Err(anyhow!("unsupported artwork source"));
     }
@@ -71,14 +136,17 @@ fn fetch(url: &str, target: &PathBuf) -> Result<()> {
     if !status.success() {
         return Err(anyhow!("artwork download failed"));
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Download (or reuse) and decode the artwork behind `url`.
 pub fn load(url: &str) -> Result<Artwork> {
     let path = cached(url);
-    fetch(url, &path)?;
+    if fetch(url, &path)? {
+        enforce_limit();
+    }
     let bytes = fs::read(&path).context("reading cached artwork")?;
+    touch(&path);
     if bytes.len() < 64 {
         return Err(anyhow!("artwork file is empty"));
     }
@@ -107,6 +175,41 @@ pub fn load(url: &str) -> Result<Artwork> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn aged_file(path: &Path, bytes: usize, seconds_ago: u64) {
+        fs::write(path, vec![7u8; bytes]).unwrap();
+        let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(SystemTime::now() - Duration::from_secs(seconds_ago))
+            .unwrap();
+    }
+
+    #[test]
+    fn evicts_the_least_recently_used_artwork_first() {
+        let dir = std::env::temp_dir().join(format!("mfe-artwork-lru-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        aged_file(&dir.join("oldest"), 600, 300);
+        aged_file(&dir.join("middle"), 600, 200);
+        aged_file(&dir.join("newest"), 600, 100);
+
+        let freed = evict(&dir, 1000);
+        assert_eq!(freed, 1200, "should drop the two oldest files");
+        assert!(!dir.join("oldest").exists());
+        assert!(!dir.join("middle").exists());
+        assert!(dir.join("newest").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keeps_everything_under_the_limit() {
+        let dir = std::env::temp_dir().join(format!("mfe-artwork-keep-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        aged_file(&dir.join("one"), 100, 20);
+        assert_eq!(evict(&dir, 4096), 0);
+        assert!(dir.join("one").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn decodes_a_local_cover() {

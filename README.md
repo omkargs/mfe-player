@@ -62,6 +62,7 @@ This is **MFE Player** — **M**usic **F**or **E**veryone. It's MIT-licensed, it
 | **Album art in the terminal** | Cover art renders as truecolor half-blocks in the inspector — no sixel or Kitty protocol required. |
 | **Cava visualiser** | `Ctrl+V` toggles a smoothed spectrum panel that dances to the actual audio. |
 | **12 themes** | `Alt+T` cycles live, and **preserves the comments in your config file** instead of nuking them. |
+| **Looks like a modern TUI** | Rounded panels, a truecolor gradient logo and an eighth-block progress bar with a smooth head. |
 | **Blends with your wallpaper** | `Alt+W` stops painting the background, so your terminal's own transparency shows the wallpaper through the app. Panels stay solid, so text stays readable. |
 | **Wallpaper palette** | `theme = "wallpaper"` (or `mfe theme adopt`) samples the wallpaper your compositor is using — swww, hyprpaper, GNOME, Plasma, macOS or Windows — and builds a matching dark palette from it. |
 | **Sleep timer** | `z` fades out over the last 15 seconds and pauses. No mid-chorus guillotine. |
@@ -348,7 +349,8 @@ The rest is a real plan, roughly in build order.
 - [x] **Wallpaper-aware theme.** `theme = "wallpaper"` / `mfe theme adopt` samples the current wallpaper and derives the panel/accent colours from it.
 - [ ] **Album-art ambient tint.** Accent colour shifts to the dominant colour of the current cover. Opt-in.
 - [ ] **ANSI-native theme.** `theme = "auto"` uses your terminal's own 16 colours, so it matches whichever theme you already run.
-- [ ] Rounded borders, gradient logo, selection rail, 256-colour fallback, Nerd Font/ASCII icon mode.
+- [x] Rounded borders, gradient logo and a smooth sub-cell progress bar.
+- [ ] 256-colour fallback and a Nerd Font/ASCII icon mode.
 - [ ] Full-screen now-playing view with big art and karaoke lyrics.
 
 ### Phase 2 — stop it breaking outside my laptop

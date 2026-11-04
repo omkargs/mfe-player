@@ -1,7 +1,8 @@
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::style::Color;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{
@@ -48,28 +49,23 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let top =
         Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)]).split(area);
 
-    let logo = Line::from(vec![
-        Span::styled(
-            " ▰ ",
-            Style::default()
-                .fg(th().accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "MFE",
-            Style::default().fg(th().fg).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            " PLAYER",
-            Style::default()
-                .fg(th().accent2)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "   music for everyone",
-            Style::default().fg(th().dim).add_modifier(Modifier::ITALIC),
-        ),
-    ]);
+    let mut logo_spans = vec![Span::styled(
+        " ▰ ",
+        Style::default()
+            .fg(th().accent)
+            .add_modifier(Modifier::BOLD),
+    )];
+    logo_spans.extend(gradient_text(
+        "MFE PLAYER",
+        th().accent,
+        th().accent2,
+        Modifier::BOLD,
+    ));
+    logo_spans.push(Span::styled(
+        "   music for everyone",
+        Style::default().fg(th().dim).add_modifier(Modifier::ITALIC),
+    ));
+    let logo = Line::from(logo_spans);
     frame.render_widget(
         Paragraph::new(logo).style(Style::default().bg(theme::bg())),
         top[0],
@@ -181,6 +177,7 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
         .title(Span::styled(" library ", Style::default().fg(th().dim)))
         .style(Style::default().bg(th().panel));
@@ -305,6 +302,7 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
     }
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
         .title(Span::styled(
             " ♪ spectrum ",
@@ -477,6 +475,7 @@ fn draw_main(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
         .title(Span::styled(title, Style::default().fg(th().dim)))
         .style(Style::default().bg(th().panel2));
@@ -954,6 +953,7 @@ fn draw_search_bar(frame: &mut Frame, app: &App, area: Rect) {
     let border = if focused { th().accent } else { th().border };
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border))
         .style(Style::default().bg(th().panel));
     let inner = block.inner(area);
@@ -1292,6 +1292,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().accent))
         .title(Span::styled(
             " listening stats ",
@@ -1457,6 +1458,7 @@ fn draw_plugins(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
         .title(Span::styled(" inspect ", Style::default().fg(th().dim)))
         .style(Style::default().bg(th().panel));
@@ -1724,6 +1726,7 @@ fn draw_eq(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().accent))
         .title(Span::styled(
             " equaliser · ctrl+e ",
@@ -1780,6 +1783,58 @@ fn draw_eq(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
     );
 }
 
+/// A smooth truecolor ramp across a piece of text. Falls back to the start
+/// colour on terminals that only speak ANSI.
+fn gradient_text(text: &str, from: Color, to: Color, modifier: Modifier) -> Vec<Span<'static>> {
+    let chars: Vec<char> = text.chars().collect();
+    let last = chars.len().saturating_sub(1).max(1) as f32;
+    chars
+        .iter()
+        .enumerate()
+        .map(|(index, ch)| {
+            let t = index as f32 / last;
+            Span::styled(
+                ch.to_string(),
+                Style::default().fg(mix(from, to, t)).add_modifier(modifier),
+            )
+        })
+        .collect()
+}
+
+fn mix(from: Color, to: Color, t: f32) -> Color {
+    match (from, to) {
+        (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
+            let t = t.clamp(0.0, 1.0);
+            let channel = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+            Color::Rgb(channel(r1, r2), channel(g1, g2), channel(b1, b2))
+        }
+        _ => from,
+    }
+}
+
+/// Eighth-block progress bar: smooth head, gradient fill, quiet remainder.
+fn bar_spans(width: usize, ratio: f64) -> Vec<Span<'static>> {
+    const PARTIAL: [&str; 9] = [" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
+    let ratio = ratio.clamp(0.0, 1.0);
+    let cells = ratio * width as f64;
+    let full = cells.floor() as usize;
+    let partial = ((cells - full as f64) * 8.0).round() as usize;
+    let denominator = width.max(1) as f32;
+
+    (0..width)
+        .map(|index| {
+            let colour = mix(th().accent, th().accent2, index as f32 / denominator);
+            if index < full {
+                Span::styled("█", Style::default().fg(colour))
+            } else if index == full && partial > 0 {
+                Span::styled(PARTIAL[partial.min(8)], Style::default().fg(colour))
+            } else {
+                Span::styled("░", Style::default().fg(th().border))
+            }
+        })
+        .collect()
+}
+
 fn info_line(label: &str, value: String) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{label:<9}"), Style::default().fg(th().faint)),
@@ -1798,6 +1853,7 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     let snapshot = app.audio_snapshot();
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
         .title(Line::from(vec![
             Span::styled(" now playing ", Style::default().fg(th().dim)),
@@ -1871,20 +1927,27 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         0.0
     };
-    let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(th().accent).bg(th().panel))
-        .ratio(ratio)
-        .label(if duration > 0.0 {
-            format!(
-                "{} / {}  ·  −{} left",
-                format_position(snapshot.position),
-                format_position(duration),
-                format_position((duration - snapshot.position).max(0.0))
-            )
-        } else {
-            format!("{} / --:--", format_position(snapshot.position))
-        });
-    frame.render_widget(gauge, gauge_area[0]);
+    let time_label = if duration > 0.0 {
+        format!(
+            " {} / {} ",
+            format_position(snapshot.position),
+            format_position(duration)
+        )
+    } else {
+        format!(" {} / --:-- ", format_position(snapshot.position))
+    };
+    let bar_width = (gauge_area[0].width as usize)
+        .saturating_sub(time_label.chars().count() + 1)
+        .max(1);
+    let mut progress = Line::from(bar_spans(bar_width, ratio));
+    progress.spans.push(Span::styled(
+        time_label,
+        Style::default().fg(th().dim).bg(th().panel),
+    ));
+    frame.render_widget(
+        Paragraph::new(progress).style(Style::default().bg(th().panel)),
+        gauge_area[0],
+    );
     app.record_hits(gauge_area[0], 0, vec![(0, HitAction::SeekBar)]);
 
     let volume_label = if app.volume <= 0.0 {
@@ -2032,6 +2095,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().accent))
         .title(Span::styled(
             " keyboard help · any key to close ",
@@ -2171,6 +2235,7 @@ fn draw_palette(frame: &mut Frame, query: &str, selected: usize, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().accent))
         .title(Span::styled(
             " command palette · fuzzy · Enter run · Esc close ",
@@ -2284,6 +2349,7 @@ fn draw_filter(
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().accent2))
         .title(Span::styled(
             format!(" fuzzy filter · {context} · Enter play · Esc close "),
@@ -2354,6 +2420,7 @@ fn draw_playlist_picker(frame: &mut Frame, app: &App, selected: usize, area: Rec
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().purple))
         .title(Span::styled(
             " add to playlist ",
@@ -2400,6 +2467,7 @@ fn draw_new_playlist(frame: &mut Frame, name: &str, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().purple))
         .title(Span::styled(
             " new playlist ",
@@ -2440,6 +2508,7 @@ fn draw_rename_playlist(frame: &mut Frame, name: &str, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().purple))
         .title(Span::styled(
             " rename playlist ",
@@ -2480,6 +2549,7 @@ fn draw_import_link(frame: &mut Frame, input: &str, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().accent2))
         .title(Span::styled(
             " import from link ",
@@ -2541,6 +2611,7 @@ fn draw_sleep(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().accent2))
         .title(Span::styled(
             " sleep timer ",
@@ -2592,6 +2663,7 @@ fn draw_confirm(frame: &mut Frame, message: &str, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().red))
         .title(Span::styled(
             " confirm ",
@@ -2643,6 +2715,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect) {
     );
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().purple))
         .title(Span::styled(
             truncate(&title, popup.width.saturating_sub(2) as usize),

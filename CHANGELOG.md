@@ -35,6 +35,9 @@
   `wallpaper` entry in the theme cycle derives a dark palette from the current
   wallpaper (swww, hyprpaper, GNOME, Plasma, macOS, Windows). Supports an
   explicit `wallpaper = "/path"` and `MFE_WALLPAPER`.
+- **Aesthetic pass:** rounded borders on every panel and popup, a truecolor
+  gradient header logo, and an eighth-block progress bar with a gradient fill
+  and a smooth head instead of a flat gauge.
 
 ## v0.2.0 — Music For Everyone
 

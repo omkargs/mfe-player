@@ -314,11 +314,6 @@ pub fn canonical_name(name: &str) -> Option<&'static str> {
     })
 }
 
-/// Resolve a configured theme name, falling back to `mfe`.
-pub fn apply_configured(name: &str) -> String {
-    apply_configured_with(name, None)
-}
-
 /// Resolve a configured theme, with an optional explicit wallpaper path from
 /// `config.toml`. `theme = "wallpaper"` derives the palette from the desktop.
 pub fn apply_configured_with(name: &str, wallpaper_path: Option<&str>) -> String {

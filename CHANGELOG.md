@@ -38,6 +38,10 @@
 - **Aesthetic pass:** rounded borders on every panel and popup, a truecolor
   gradient header logo, and an eighth-block progress bar with a gradient fill
   and a smooth head instead of a flat gauge.
+- **`mfe update`:** asks GitHub for the latest release, compares it
+  numerically and on Unix replaces the running binary from the platform
+  tarball. `--check` reports without touching anything; offline or weird
+  installs fall back to the installer one-liner.
 - **One-command installer:** `install.sh` opens with an animated truecolor
   MFE PLAYER wordmark, detects the distro's package manager, installs mpv,
   python3, yt-dlp, ffmpeg, cava and playerctl, then installs the player from a

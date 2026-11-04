@@ -256,6 +256,7 @@ mfe toggle                  # pause/resume
 mfe completions bash        # also: zsh, fish
 mfe doctor                  # why is the audio not playing?
 mfe cache clean             # free the artwork cache
+mfe update                  # grab the latest release (--check to only look)
 ```
 
 ---
@@ -395,7 +396,7 @@ The rest is a real plan, roughly in build order.
 - [x] `mfe cache clean` plus `mfe cache` for a size readout.
 - [x] `install.sh` (animated, installs deps, runs doctor), AUR `PKGBUILD`, Nix flake, Homebrew formula template and a systemd unit.
 - [x] npm/bun (`optionalDependencies`), pip/pipx/uv wheels via maturin, crates.io, all fed by one release workflow.
-- [ ] `mfe update`.
+- [x] `mfe update` (self-replaces from the release tarball; `--check` for scripts).
 - [ ] LRU eviction for the artwork cache.
 - [ ] A `vhs` demo GIF for this README, because a wall of text is not a demo.
 

@@ -14,6 +14,7 @@ mod social;
 mod state;
 mod theme;
 mod ui;
+mod update;
 mod wallpaper;
 
 use std::io::{self, Stdout};
@@ -77,6 +78,11 @@ fn main() -> Result<()> {
         }
         Some("doctor") => {
             std::process::exit(doctor::run());
+        }
+        Some("update") => {
+            let check_only = raw_args.iter().any(|arg| arg == "--check");
+            update::run(check_only)?;
+            return Ok(());
         }
         Some("cache") => {
             let artwork = config::artwork_dir();
@@ -207,7 +213,7 @@ fn completions(shell: &str) -> String {
     match shell {
         "fish" => {
             r#"# mfe-player fish completions
-complete -c mfe -f -a "status current share theme doctor cache toggle stop completions" -d "MFE Player"
+complete -c mfe -f -a "status current share theme doctor cache update toggle stop completions" -d "MFE Player"
 complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
 complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
 "#
@@ -223,6 +229,7 @@ _mfe() {
     'theme:show or adopt a colour theme'
     'doctor:check mpv, plugins, config and clipboard'
     'cache:show or clear the artwork cache'
+    'update:update to the latest release'
     'toggle:play/pause the background player'
     'stop:stop playback and the daemon'
     'completions:print shell completions'
@@ -254,13 +261,15 @@ _mfe_player() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "status current share theme doctor cache toggle stop completions" -- "$cur") )
+    COMPREPLY=( $(compgen -W "status current share theme doctor cache update toggle stop completions" -- "$cur") )
   elif [ "$prev" = "completions" ]; then
     COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
   elif [ "$prev" = "theme" ]; then
     COMPREPLY=( $(compgen -W "adopt list" -- "$cur") )
   elif [ "$prev" = "cache" ]; then
     COMPREPLY=( $(compgen -W "clean" -- "$cur") )
+  elif [ "$prev" = "update" ]; then
+    COMPREPLY=( $(compgen -W "--check" -- "$cur") )
   elif [ "$prev" = "status" ]; then
     COMPREPLY=( $(compgen -W "--json" -- "$cur") )
   fi
@@ -291,6 +300,7 @@ fn cli_action() -> CliAction {
                mfe-player theme list      every built-in theme
                mfe-player theme adopt     derive a theme from your wallpaper
                mfe-player doctor          check mpv, plugins, config, clipboard
+               mfe-player update          update to the latest release (--check)
                mfe-player cache [clean]   show or clear the artwork cache\n\
                mfe-player current         one-line now playing\n\
                mfe-player share           copy now playing to the clipboard\n\

@@ -239,6 +239,13 @@ theme = "tokyo-night"
 
 No theme fits? Copy `src/theme.rs`, add 13 colours, open a PR. It's genuinely that small. Code contributions that make the terminal look less like 1998 are extremely welcome.
 
+**Blending with your wallpaper.** Two things are coming for this, because "transparent" and "matches my wallpaper" are different problems:
+
+1. **Stop covering it.** The app will be able to leave its background unpainted, so whatever transparency/blur your terminal already has — and therefore your wallpaper — shows through.
+2. **Match its colours.** `theme = "wallpaper"` reads the wallpaper your compositor is actually using, pulls a palette out of it, and builds the UI colours from that. Dark wallpaper → dark panels. Warm sunset photo → warm accent. No config, no colour picker.
+
+Until then: set your terminal's opacity to taste and pick the theme closest to your wallpaper. `mono` and `ocean` are the two that disappear into busy backgrounds least badly.
+
 ---
 
 ## 🔌 Plugins are just Python
@@ -321,23 +328,45 @@ Want scrobbles without handing over a social graph? Paste a ListenBrainz user to
 
 ## 🗺 Roadmap
 
-- [x] Search, playlists, queue, favourites, lyrics
-- [x] Radio autoplay and gapless prefetch
-- [x] Offline downloads and local-first playback
-- [x] MPRIS, media keys, cava, EQ, normalisation
-- [x] Sleep timer with fade-out
-- [x] Background daemon with working repeat/queue
-- [x] 12 themes and playback speed
-- [x] Smart fade and ReplayGain
-- [x] Editable 10-band EQ
-- [x] ListenBrainz scrobbling
-- [x] Internet Archive and Radio Browser sources
-- [x] Local library and album art
-- [ ] macOS support (copy paths, `/proc` replacement)
-- [ ] Windows named-pipe transport
-- [ ] Terminal transparency / background blur support
-- [ ] Last.fm scrobbling plugin
-- [ ] Plugin marketplace UI
+Shipped: search, playlists, queue, favourites, lyrics, radio, prefetch, downloads, MPRIS, cava, EQ, normalisation, sleep timer, background daemon, 12 themes, speed, smart fade, ReplayGain, ListenBrainz, Internet Archive, Radio Browser, local library, album art, history, stats, sharing, CLI JSON.
+
+The rest is a real plan, roughly in build order.
+
+### Phase 1 — make it look like it belongs on your desktop
+- [ ] **Transparent background.** `transparent = true` (and a hotkey) stops painting the base background, so your terminal's own opacity/blur shows your wallpaper through the app. Works in kitty, wezterm, alacritty, foot, ghostty, Konsole — MFE just stops covering the wallpaper. No fake "glass", just gets out of the way.
+- [ ] **Wallpaper-aware theme.** `theme = "wallpaper"` (or `mfe theme adopt`) samples the current wallpaper — via swww, hyprpaper, swaybg, feh, gsettings or Plasma — and derives the panel/accent colours from it, so the UI blends instead of fighting it. `image` is already a dependency.
+- [ ] **Album-art ambient tint.** Accent colour shifts to the dominant colour of the current cover. Opt-in.
+- [ ] **ANSI-native theme.** `theme = "auto"` uses your terminal's own 16 colours, so it matches whichever theme you already run.
+- [ ] Rounded borders, gradient logo, selection rail, 256-colour fallback, Nerd Font/ASCII icon mode.
+- [ ] Full-screen now-playing view with big art and karaoke lyrics.
+
+### Phase 2 — stop it breaking outside my laptop
+- [ ] macOS: replace the `/proc` pid check, native Application Support paths, CI build.
+- [ ] Windows: named-pipe mpv transport (`src/ipc.rs`), detach flags, `clip` clipboard, CI build. mpv already speaks named pipes, so the protocol does not change.
+- [ ] CI matrix for Linux/macOS/Windows so "works on my machine" stops being the test plan.
+
+### Phase 3 — installable, and able to diagnose itself
+- [ ] `mfe doctor` — checks mpv, yt-dlp, python3, socket, config and clipboard, then prints the exact fix.
+- [ ] `mfe cache --clean` plus LRU eviction for the artwork cache.
+- [ ] `mfe update` and a working `install.sh` one-liner.
+- [ ] AUR, Nix flake, Homebrew tap; winget/scoop once Windows lands.
+- [ ] A `vhs` demo GIF for this README, because a wall of text is not a demo.
+
+### Phase 4 — social, on your terms
+- [ ] Last.fm scrobbling plugin (MD5 signature, no OAuth dance).
+- [ ] Discord Rich Presence plugin.
+- [ ] Opt-in desktop notifications on track change.
+- [ ] Scrobble backfill from local history.
+
+### Phase 5 — library smarts
+- [ ] Smart playlists: recently added, never played, most played, on repeat.
+- [ ] Bulk download an album or playlist.
+- [ ] Terminal title sync: `▶ Track — Artist`, restored on exit.
+- [ ] Per-track resume bookmarks for long mixes and podcasts.
+- [ ] "Listening wrapped" generated from history.
+- [ ] Library watch mode and duplicate detection.
+
+Mulling but not committing: an MPD shim so `mpc`/`ncmpcpp` can drive MFE, a compact `mfe now` pane for tmux/waybar, shareable theme files (`mfe theme export/import`), podcast chapter support, and tag editing via `lofty`.
 
 PRs for any unchecked box are welcome. So are issues that start with "this broke at 3 a.m." — those are usually the real ones. And if you're here to tell me a desktop app would be nicer: no it wouldn't, and also I'm broke.
 

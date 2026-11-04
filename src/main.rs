@@ -12,6 +12,7 @@ mod social;
 mod state;
 mod theme;
 mod ui;
+mod wallpaper;
 
 use std::io::{self, Stdout};
 use std::panic;
@@ -72,6 +73,30 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
+        Some("theme") => {
+            let (config, _) = config::load_config();
+            match raw_args.get(1).map(String::as_str) {
+                Some("adopt") | Some("wallpaper") => {
+                    match theme::adopt_wallpaper(Some(&config.wallpaper)) {
+                        Ok(path) => {
+                            config::set_theme_in_file("wallpaper");
+                            println!("theme: wallpaper · {path}");
+                        }
+                        Err(err) => {
+                            eprintln!("could not adopt wallpaper: {err}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Some("list") => {
+                    for name in theme::THEME_NAMES {
+                        println!("{name}");
+                    }
+                }
+                _ => println!("{}", config.theme),
+            }
+            return Ok(());
+        }
         Some("completions") => {
             let shell = raw_args.get(1).map(String::as_str).unwrap_or("bash");
             print!("{}", completions(shell));
@@ -93,7 +118,7 @@ fn main() -> Result<()> {
 
     let (app_config, config_warning) = config::load_config();
     let mouse = app_config.mouse;
-    theme::apply_configured(&app_config.theme);
+    theme::apply_configured_with(&app_config.theme, Some(&app_config.wallpaper));
     let mut app = app::App::new(app_config)?;
     if let Some(warning) = config_warning {
         app.flash(warning);
@@ -127,7 +152,7 @@ fn completions(shell: &str) -> String {
     match shell {
         "fish" => {
             r#"# mfe-player fish completions
-complete -c mfe -f -a "status current share toggle stop completions" -d "MFE Player"
+complete -c mfe -f -a "status current share theme toggle stop completions" -d "MFE Player"
 complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
 complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
 "#
@@ -140,6 +165,7 @@ _mfe() {
     'status:show what is playing'
     'current:one-line now playing'
     'share:copy now playing to the clipboard'
+    'theme:show or adopt a colour theme'
     'toggle:play/pause the background player'
     'stop:stop playback and the daemon'
     'completions:print shell completions'
@@ -154,6 +180,8 @@ _mfe() {
         _arguments '--json[JSON output]'
       elif [[ $words[2] == completions ]]; then
         _values 'shell' bash zsh fish
+      elif [[ $words[2] == theme ]]; then
+        _values 'action' adopt list
       fi
       ;;
   esac
@@ -169,9 +197,11 @@ _mfe_player() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "status current share toggle stop completions" -- "$cur") )
+    COMPREPLY=( $(compgen -W "status current share theme toggle stop completions" -- "$cur") )
   elif [ "$prev" = "completions" ]; then
     COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
+  elif [ "$prev" = "theme" ]; then
+    COMPREPLY=( $(compgen -W "adopt list" -- "$cur") )
   elif [ "$prev" = "status" ]; then
     COMPREPLY=( $(compgen -W "--json" -- "$cur") )
   fi
@@ -197,7 +227,10 @@ fn cli_action() -> CliAction {
                mfe-player                 open the TUI\n\
                mfe-player daft punk       open the TUI with search results\n\
                mfe-player status          what is playing right now?\n\
-               mfe-player status --json   waybar/polybar/tmux friendly JSON\n\
+               mfe-player status --json   waybar/polybar/tmux friendly JSON
+               mfe-player theme           print the current theme
+               mfe-player theme list      every built-in theme
+               mfe-player theme adopt     derive a theme from your wallpaper\n\
                mfe-player current         one-line now playing\n\
                mfe-player share           copy now playing to the clipboard\n\
                mfe-player toggle          play/pause the background player\n\

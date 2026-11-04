@@ -323,6 +323,8 @@ pub enum PaletteAction {
     CycleReplayGain,
     OpenEq,
     CycleTheme,
+    ToggleTransparency,
+    AdoptWallpaper,
     ToggleCava,
     Background,
     Help,
@@ -588,6 +590,16 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         action: PaletteAction::CycleTheme,
     },
     PaletteItem {
+        label: "Toggle transparent background",
+        hint: "Alt+W",
+        action: PaletteAction::ToggleTransparency,
+    },
+    PaletteItem {
+        label: "Adopt wallpaper colours",
+        hint: "theme = wallpaper",
+        action: PaletteAction::AdoptWallpaper,
+    },
+    PaletteItem {
         label: "Import songs or a playlist from a link",
         hint: "Ctrl+L",
         action: PaletteAction::ImportLink,
@@ -809,7 +821,8 @@ impl App {
         if !headless {
             crate::daemon::takeover();
         }
-        let theme_name = theme::apply_configured(&config.theme);
+        let theme_name = theme::apply_configured_with(&config.theme, Some(&config.wallpaper));
+        theme::set_transparent(config.transparent);
         let cava_enabled = config.cava;
         let cava = (!headless && cava_enabled).then(|| Cava::spawn(config.cava_bars));
         let downloads = load_downloads();
@@ -1255,6 +1268,9 @@ impl App {
                 self.cycle_replaygain()
             }
             KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::ALT) => self.cycle_theme(),
+            KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.toggle_transparency()
+            }
             KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.seek(-self.config.long_seek_step)
             }
@@ -3163,10 +3179,48 @@ impl App {
             .map(|index| (index + 1) % names.len())
             .unwrap_or(0);
         let name = names[index];
+        if name == "wallpaper" {
+            match theme::adopt_wallpaper(Some(&self.config.wallpaper)) {
+                Ok(path) => {
+                    self.theme_name = name.to_string();
+                    config::set_theme_in_file(name);
+                    let file = std::path::Path::new(&path)
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or(path);
+                    self.flash(format!("theme: wallpaper · {file}"));
+                }
+                Err(err) => {
+                    theme::set_theme("mfe");
+                    self.theme_name = "mfe".to_string();
+                    config::set_theme_in_file("mfe");
+                    self.flash(format!("wallpaper theme failed: {err}"));
+                }
+            }
+            return;
+        }
         theme::set_theme(name);
         self.theme_name = name.to_string();
         config::set_theme_in_file(name);
         self.flash(format!("theme: {name}"));
+    }
+
+    fn toggle_transparency(&mut self) {
+        self.config.transparent = !self.config.transparent;
+        theme::set_transparent(self.config.transparent);
+        config::set_line(
+            "transparent",
+            if self.config.transparent {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        self.flash(if self.config.transparent {
+            "background transparent · terminal opacity now shows the wallpaper"
+        } else {
+            "background solid"
+        });
     }
 
     fn toggle_cava(&mut self) {
@@ -5048,6 +5102,17 @@ impl App {
             PaletteAction::CycleReplayGain => self.cycle_replaygain(),
             PaletteAction::OpenEq => self.overlay = Some(Overlay::Eq { selected: 0 }),
             PaletteAction::CycleTheme => self.cycle_theme(),
+            PaletteAction::ToggleTransparency => self.toggle_transparency(),
+            PaletteAction::AdoptWallpaper => {
+                match theme::adopt_wallpaper(Some(&self.config.wallpaper)) {
+                    Ok(path) => {
+                        self.theme_name = "wallpaper".to_string();
+                        config::set_theme_in_file("wallpaper");
+                        self.flash(format!("theme: wallpaper · {path}"));
+                    }
+                    Err(err) => self.flash(format!("wallpaper theme failed: {err}")),
+                }
+            }
             PaletteAction::ImportLink => self.open_link_import(),
             PaletteAction::ToggleCava => self.toggle_cava(),
             PaletteAction::Background => self.detach_background(),

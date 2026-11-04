@@ -20,7 +20,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.hits.clear();
     let area = frame.area();
     frame.render_widget(
-        Block::default().style(Style::default().bg(th().bg).fg(th().fg)),
+        Block::default().style(Style::default().bg(theme::bg()).fg(th().fg)),
         area,
     );
 
@@ -71,7 +71,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ]);
     frame.render_widget(
-        Paragraph::new(logo).style(Style::default().bg(th().bg)),
+        Paragraph::new(logo).style(Style::default().bg(theme::bg())),
         top[0],
     );
 
@@ -96,7 +96,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     ])
     .alignment(Alignment::Right);
     frame.render_widget(
-        Paragraph::new(status_line).style(Style::default().bg(th().bg)),
+        Paragraph::new(status_line).style(Style::default().bg(theme::bg())),
         top[1],
     );
 
@@ -117,7 +117,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ]);
     frame.render_widget(
-        Paragraph::new(line2).style(Style::default().bg(th().bg)),
+        Paragraph::new(line2).style(Style::default().bg(theme::bg())),
         Rect {
             x: area.x,
             y: area.y + 1,
@@ -1974,7 +1974,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             ),
             Style::default().fg(th().faint),
         )))
-        .style(Style::default().bg(th().bg)),
+        .style(Style::default().bg(theme::bg())),
         cols[0],
     );
     let status = if let Some((toast, _)) = &app.toast {
@@ -1991,7 +1991,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(if app.resolving { th().yellow } else { th().dim }),
         )))
         .alignment(Alignment::Right)
-        .style(Style::default().bg(th().bg)),
+        .style(Style::default().bg(theme::bg())),
         cols[1],
     );
 }
@@ -2114,7 +2114,8 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("Alt+N", "toggle loudness normalisation"),
         key("Ctrl+V", "toggle the cava spectrum panel"),
         key("inspector", "album art loads automatically for the playing track"),
-        key("Alt+T", "cycle colour theme"),
+        key("Alt+T", "cycle colour theme (wallpaper = sample the desktop)"),
+        key("Alt+W", "transparent background (let the terminal show the wallpaper)"),
         key("Ctrl+P / :", "fzf command palette (every action)"),
         key("playerctl", "media keys control this player via MPRIS"),
         Line::from(""),
@@ -2508,7 +2509,7 @@ fn draw_import_link(frame: &mut Frame, input: &str, area: Rect) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ", Style::default().bg(th().bg)),
+            Span::styled("  ", Style::default().bg(theme::bg())),
             Span::styled(
                 format!("{shown}▌"),
                 Style::default()

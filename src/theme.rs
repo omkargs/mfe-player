@@ -1,6 +1,9 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 
 use ratatui::style::Color;
+
+use crate::wallpaper;
 
 /// A small, self-contained colour palette. The renderer reads it through
 /// [`get`], so changing it in one place recolours the whole interface.
@@ -215,6 +218,29 @@ const OCEAN: Theme = Theme {
 
 static CURRENT: RwLock<Theme> = RwLock::new(MFE);
 
+/// When enabled, the app stops painting the base background so the terminal's
+/// own transparency (and therefore the wallpaper) shows through. Panels still
+/// use `theme.panel`, so text stays readable.
+static TRANSPARENT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_transparent(enabled: bool) {
+    TRANSPARENT.store(enabled, Ordering::Relaxed);
+}
+
+pub fn transparent() -> bool {
+    TRANSPARENT.load(Ordering::Relaxed)
+}
+
+/// Background for the app chrome. `Color::Reset` hands the cell back to the
+/// terminal, which is what makes transparency work at all.
+pub fn bg() -> Color {
+    if transparent() {
+        Color::Reset
+    } else {
+        get().bg
+    }
+}
+
 pub const THEME_NAMES: &[&str] = &[
     "mfe",
     "gruvbox",
@@ -228,6 +254,7 @@ pub const THEME_NAMES: &[&str] = &[
     "solarized",
     "amber",
     "ocean",
+    "wallpaper",
 ];
 
 fn preset(name: &str) -> Option<Theme> {
@@ -244,6 +271,7 @@ fn preset(name: &str) -> Option<Theme> {
         "solarized" | "solarized-dark" | "solar" => Some(SOLARIZED),
         "amber" | "retro" | "terminal" => Some(AMBER),
         "ocean" | "deep" | "abyss" => Some(OCEAN),
+        // "wallpaper" is resolved from the desktop, not from a fixed palette.
         _ => None,
     }
 }
@@ -281,12 +309,28 @@ pub fn canonical_name(name: &str) -> Option<&'static str> {
         "solarized" | "solarized-dark" | "solar" => "solarized",
         "amber" | "retro" | "terminal" => "amber",
         "ocean" | "deep" | "abyss" => "ocean",
+        "wallpaper" | "wall" | "desktop" => "wallpaper",
         _ => return None,
     })
 }
 
 /// Resolve a configured theme name, falling back to `mfe`.
 pub fn apply_configured(name: &str) -> String {
+    apply_configured_with(name, None)
+}
+
+/// Resolve a configured theme, with an optional explicit wallpaper path from
+/// `config.toml`. `theme = "wallpaper"` derives the palette from the desktop.
+pub fn apply_configured_with(name: &str, wallpaper_path: Option<&str>) -> String {
+    if canonical_name(name) == Some("wallpaper") {
+        return match adopt_wallpaper(wallpaper_path) {
+            Ok(_) => "wallpaper".to_string(),
+            Err(_) => {
+                set_theme("mfe");
+                "mfe".to_string()
+            }
+        };
+    }
     match canonical_name(name) {
         Some(canonical) => {
             set_theme(canonical);
@@ -297,4 +341,14 @@ pub fn apply_configured(name: &str) -> String {
             "mfe".to_string()
         }
     }
+}
+
+/// Derive a theme from the current wallpaper and make it active. Returns the
+/// wallpaper path so the UI can tell the user which image it sampled.
+pub fn adopt_wallpaper(explicit: Option<&str>) -> anyhow::Result<String> {
+    let (path, theme) = wallpaper::palette_for(explicit)?;
+    if let Ok(mut current) = CURRENT.write() {
+        *current = theme;
+    }
+    Ok(path.display().to_string())
 }

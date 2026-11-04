@@ -207,6 +207,11 @@ pub struct AppConfig {
     pub fade_seconds: f64,
     /// ReplayGain gain applied to files that carry the tags: off | track | album.
     pub replaygain: String,
+    /// Leave the base background unpainted so the terminal's transparency
+    /// (and therefore the wallpaper) shows through.
+    pub transparent: bool,
+    /// Explicit wallpaper for `theme = "wallpaper"`. Empty = ask the desktop.
+    pub wallpaper: String,
 }
 
 impl Default for AppConfig {
@@ -232,6 +237,8 @@ impl Default for AppConfig {
             listenbrainz_token: String::new(),
             fade_seconds: 0.0,
             replaygain: "off".to_string(),
+            transparent: false,
+            wallpaper: String::new(),
         }
     }
 }
@@ -291,6 +298,14 @@ replaygain = "off"
 
 # Custom ten-band EQ curve in dB. Tune it with Ctrl+E in the app.
 eq_gains = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# Let the terminal's transparency show your wallpaper through the app.
+# Toggle at runtime with Alt+W.
+transparent = false
+
+# Optional explicit wallpaper for theme = "wallpaper". Empty means "ask the
+# compositor" (swww, hyprpaper, GNOME, Plasma, macOS, Windows).
+wallpaper = ""
 "#;
 
 pub fn load_config() -> (AppConfig, Option<String>) {

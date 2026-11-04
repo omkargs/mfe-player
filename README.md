@@ -62,6 +62,8 @@ This is **MFE Player** — **M**usic **F**or **E**veryone. It's MIT-licensed, it
 | **Album art in the terminal** | Cover art renders as truecolor half-blocks in the inspector — no sixel or Kitty protocol required. |
 | **Cava visualiser** | `Ctrl+V` toggles a smoothed spectrum panel that dances to the actual audio. |
 | **12 themes** | `Alt+T` cycles live, and **preserves the comments in your config file** instead of nuking them. |
+| **Blends with your wallpaper** | `Alt+W` stops painting the background, so your terminal's own transparency shows the wallpaper through the app. Panels stay solid, so text stays readable. |
+| **Wallpaper palette** | `theme = "wallpaper"` (or `mfe theme adopt`) samples the wallpaper your compositor is using — swww, hyprpaper, GNOME, Plasma, macOS or Windows — and builds a matching dark palette from it. |
 | **Sleep timer** | `z` fades out over the last 15 seconds and pauses. No mid-chorus guillotine. |
 | **Playback speed** | `[` / `]` for 0.5×–2.0×, `\` to reset. Podcasts, mixes and 10-hour loops welcome. |
 | **Smart fade** | `Alt+F` ramps the volume down over the last seconds of a song and back up on the next one. No drops, no guillotines. |
@@ -164,7 +166,8 @@ Press `?` inside the app for the full, searchable map. The ones you'll actually 
 | `Ctrl+V` | Toggle cava spectrum |
 | `z` | Sleep timer (15–90 min or end of track, fades out) |
 | `E` · `Alt+N` | EQ presets · loudness normalisation |
-| `Alt+T` | Cycle themes |
+| `Alt+T` | Cycle themes (`wallpaper` samples your desktop) |
+| `Alt+W` | Transparent background |
 | `Ctrl+B` | Detach and keep playing |
 | `Ctrl+P` or `:` | Command palette — every action, fuzzy-searchable |
 | `q` | Quit and stop |
@@ -239,12 +242,18 @@ theme = "tokyo-night"
 
 No theme fits? Copy `src/theme.rs`, add 13 colours, open a PR. It's genuinely that small. Code contributions that make the terminal look less like 1998 are extremely welcome.
 
-**Blending with your wallpaper.** Two things are coming for this, because "transparent" and "matches my wallpaper" are different problems:
+**Blending with your wallpaper.** Two separate problems, two switches:
 
-1. **Stop covering it.** The app will be able to leave its background unpainted, so whatever transparency/blur your terminal already has — and therefore your wallpaper — shows through.
-2. **Match its colours.** `theme = "wallpaper"` reads the wallpaper your compositor is actually using, pulls a palette out of it, and builds the UI colours from that. Dark wallpaper → dark panels. Warm sunset photo → warm accent. No config, no colour picker.
+1. **Stop covering it.** `Alt+W` (or `transparent = true`) leaves the base background unpainted, so whatever transparency or blur your terminal already has — and therefore your wallpaper — shows through. Panels and popups stay solid, so text stays readable even over a busy photo.
+2. **Match its colours.** `theme = "wallpaper"` reads the wallpaper your compositor is actually using — swww, hyprpaper, GNOME, Plasma, macOS or Windows — and derives the panel and accent colours from it. Dark wallpaper, dark panels. Warm sunset, warm accent. Or point it at a specific file with `wallpaper = "/path/to/image.jpg"`, or run `mfe theme adopt` once.
 
-Until then: set your terminal's opacity to taste and pick the theme closest to your wallpaper. `mono` and `ocean` are the two that disappear into busy backgrounds least badly.
+```bash
+mfe theme adopt          # sample the current wallpaper and save the choice
+mfe theme list           # every built-in theme, including `wallpaper`
+mfe theme                # what am I using right now?
+```
+
+Your terminal still does the actual blurring — MFE just stops painting over it. kitty, wezterm, alacritty, foot, ghostty and Konsole all support opacity. On a terminal without transparency, use the palette half: it still matches the colours.
 
 ---
 
@@ -291,7 +300,9 @@ The trick, if you want to build one: your plugin prints JSON. That's it. `main.p
 `~/.config/mfe-player/config.toml` — every key is optional.
 
 ```toml
-theme = "mfe"
+theme = "mfe"             # or "wallpaper" to sample your desktop
+transparent = false       # Alt+W; let the terminal show what is behind it
+wallpaper = ""            # explicit image for theme = "wallpaper"; empty = detect
 seek_step = 5
 long_seek_step = 30
 volume_step = 5
@@ -328,13 +339,13 @@ Want scrobbles without handing over a social graph? Paste a ListenBrainz user to
 
 ## 🗺 Roadmap
 
-Shipped: search, playlists, queue, favourites, lyrics, radio, prefetch, downloads, MPRIS, cava, EQ, normalisation, sleep timer, background daemon, 12 themes, speed, smart fade, ReplayGain, ListenBrainz, Internet Archive, Radio Browser, local library, album art, history, stats, sharing, CLI JSON.
+Shipped: search, playlists, queue, favourites, lyrics, radio, prefetch, downloads, MPRIS, cava, EQ, normalisation, sleep timer, background daemon, 12 themes, speed, smart fade, ReplayGain, ListenBrainz, Internet Archive, Radio Browser, local library, album art, history, stats, sharing, CLI JSON, transparent background, wallpaper palettes.
 
 The rest is a real plan, roughly in build order.
 
 ### Phase 1 — make it look like it belongs on your desktop
-- [ ] **Transparent background.** `transparent = true` (and a hotkey) stops painting the base background, so your terminal's own opacity/blur shows your wallpaper through the app. Works in kitty, wezterm, alacritty, foot, ghostty, Konsole — MFE just stops covering the wallpaper. No fake "glass", just gets out of the way.
-- [ ] **Wallpaper-aware theme.** `theme = "wallpaper"` (or `mfe theme adopt`) samples the current wallpaper — via swww, hyprpaper, swaybg, feh, gsettings or Plasma — and derives the panel/accent colours from it, so the UI blends instead of fighting it. `image` is already a dependency.
+- [x] **Transparent background.** `Alt+W` / `transparent = true` stops painting the base background, so the terminal's own opacity/blur shows your wallpaper through the app.
+- [x] **Wallpaper-aware theme.** `theme = "wallpaper"` / `mfe theme adopt` samples the current wallpaper and derives the panel/accent colours from it.
 - [ ] **Album-art ambient tint.** Accent colour shifts to the dominant colour of the current cover. Opt-in.
 - [ ] **ANSI-native theme.** `theme = "auto"` uses your terminal's own 16 colours, so it matches whichever theme you already run.
 - [ ] Rounded borders, gradient logo, selection rail, 256-colour fallback, Nerd Font/ASCII icon mode.

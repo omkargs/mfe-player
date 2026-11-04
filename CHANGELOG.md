@@ -28,6 +28,13 @@
 - **Radio Browser:** another metadata + streaming bundle queries
   radio-browser.info for live stations worldwide and pipes them straight into
   mpv (mpv plays ICY/SHOUTcast natively).
+- **Transparent background:** `Alt+W` (or `transparent = true`) leaves the
+  base background unpainted so the terminal's own opacity and blur show the
+  wallpaper through. Panels stay solid for readability.
+- **Wallpaper palette:** `theme = "wallpaper"`, `mfe theme adopt` or the
+  `wallpaper` entry in the theme cycle derives a dark palette from the current
+  wallpaper (swww, hyprpaper, GNOME, Plasma, macOS, Windows). Supports an
+  explicit `wallpaper = "/path"` and `MFE_WALLPAPER`.
 
 ## v0.2.0 — Music For Everyone
 

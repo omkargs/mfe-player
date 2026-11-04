@@ -103,23 +103,35 @@ Terminal font does the rest. It looks even better with a real cava panel on the 
 
 **Linux** is the tested target. **macOS** builds in CI and uses the same Unix-socket transport. **Windows** is wired up too — mpv speaks named pipes and the IPC layer now handles that — but it is marked experimental until someone runs it on real hardware and tells me what broke.
 
-You need **Rust 1.85+**, **mpv**, **yt-dlp** and **python3**.
+The one command that does everything:
 
 ```bash
-# Debian / Ubuntu
-sudo apt install mpv python3 ffmpeg cava playerctl
-cargo install yt-dlp   # or: pipx install yt-dlp
+curl -fsSL https://raw.githubusercontent.com/omkargs/mfe-player/master/install.sh | bash
 ```
 
-Then build and drop it on your PATH:
+It installs the player **and** mpv, python3, yt-dlp, ffmpeg, cava and playerctl with whatever package manager your distro has, writes bash/fish/zsh completions, then runs `mfe doctor` so a broken audio stack is caught immediately. No flags, no prompts.
+
+Prefer your own package manager? Every tag publishes all of these from the same build:
+
+```bash
+npm install -g mfe-player        # bun add -g mfe-player · bunx mfe-player
+pipx install mfe-player          # uv tool install mfe-player · pip install mfe-player
+cargo install mfe-player         # cargo binstall mfe-player (prebuilt)
+```
+
+`pip`/`pipx` install the `mfe-player` command; npm, cargo and the installer also give you the short `mfe` alias.
+
+From source, if you want to poke at it:
 
 ```bash
 git clone https://github.com/omkargs/mfe-player.git
 cd mfe-player
-cargo build --release
+cargo build --release --locked
 install -Dm755 target/release/mfe-player ~/.local/bin/mfe-player
 ln -sf ~/.local/bin/mfe-player ~/.local/bin/mfe
 ```
+
+You need **Rust 1.85+**, **mpv**, **yt-dlp** and **python3** for the source build.
 
 ```bash
 mfe                     # open the TUI
@@ -136,11 +148,14 @@ If you just want the prebuilt binary, grab the tarball from [Releases](https://g
 Packaging files live in the repo so you don't have to invent them:
 
 ```bash
+install.sh                            # one-command install + deps + doctor
+npm/                                  # npm/bun packages (optionalDependencies)
+pyproject.toml                        # maturin wheels for pip / pipx / uv
 packaging/PKGBUILD                    # Arch (AUR-style, builds from source)
 flake.nix                             # Nix flake: nix run .#default
 packaging/homebrew/mfe-player.rb      # Homebrew formula template
 packaging/mfe-player.service          # systemd --user unit for the daemon
-install.sh                            # build from source and install to ~/.local/bin
+.github/workflows/release.yml         # binaries → GitHub, npm, PyPI, crates.io
 ```
 
 Not in the official repos yet — these are the real files, waiting for a tap and an AUR push.
@@ -378,7 +393,8 @@ The rest is a real plan, roughly in build order.
 ### Phase 3 — installable, and able to diagnose itself
 - [x] `mfe doctor` — checks mpv, yt-dlp, python3, socket, config, plugins, clipboard and wallpaper, then prints the exact fix.
 - [x] `mfe cache clean` plus `mfe cache` for a size readout.
-- [x] `install.sh`, AUR `PKGBUILD`, Nix flake, Homebrew formula template and a systemd unit.
+- [x] `install.sh` (animated, installs deps, runs doctor), AUR `PKGBUILD`, Nix flake, Homebrew formula template and a systemd unit.
+- [x] npm/bun (`optionalDependencies`), pip/pipx/uv wheels via maturin, crates.io, all fed by one release workflow.
 - [ ] `mfe update`.
 - [ ] LRU eviction for the artwork cache.
 - [ ] A `vhs` demo GIF for this README, because a wall of text is not a demo.

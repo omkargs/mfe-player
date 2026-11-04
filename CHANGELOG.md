@@ -38,6 +38,18 @@
 - **Aesthetic pass:** rounded borders on every panel and popup, a truecolor
   gradient header logo, and an eighth-block progress bar with a gradient fill
   and a smooth head instead of a flat gauge.
+- **One-command installer:** `install.sh` opens with an animated truecolor
+  MFE PLAYER wordmark, detects the distro's package manager, installs mpv,
+  python3, yt-dlp, ffmpeg, cava and playerctl, then installs the player from a
+  release tarball, cargo or npm, writes completions and runs `mfe doctor`.
+- **npm/bun package:** a tiny launcher plus per-platform optionalDependencies
+  (linux x64/arm64, linux x64 musl, macOS x64/arm64, Windows x64), so there is
+  no postinstall download and bun works for free.
+- **pip / pipx / uv wheels:** `pyproject.toml` uses maturin `bindings = "bin"`,
+  putting the real binary on PATH with no Python glue.
+- **Release pipeline:** `.github/workflows/release.yml` builds the six
+  binaries, publishes the GitHub release, npm packages, PyPI wheels and the
+  crates.io crate from the same tag.
 - **`mfe doctor`:** checks mpv, python3, yt-dlp, ffmpeg, cava, playerctl,
   config parsing, installed plugins, mpv socket, daemon, clipboard, wallpaper
   detection and truecolor support, then prints the exact fix for anything

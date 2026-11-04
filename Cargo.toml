@@ -4,10 +4,13 @@ version = "0.2.1"
 edition = "2021"
 description = "Music For Everyone — a plugin-driven, terminal-native music player that tells subscriptions to get lost"
 license = "MIT"
+readme = "README.md"
+rust-version = "1.85"
 repository = "https://github.com/omkargs/mfe-player"
 homepage = "https://github.com/omkargs/mfe-player"
 keywords = ["music", "tui", "terminal", "streaming", "mpv"]
 categories = ["command-line-utilities", "multimedia"]
+exclude = ["npm/**", "packaging/**", ".github/**", "assets/**", "install.sh"]
 
 [dependencies]
 anyhow = "1"

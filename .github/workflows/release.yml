@@ -2,31 +2,201 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            packages: musl-tools
+            linker: musl-gcc
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            packages: gcc-aarch64-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cross linker
+        if: matrix.linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.packages }}
+          mkdir -p .cargo
+          printf '[target.%s]\nlinker = "%s"\n' "${{ matrix.target }}" "${{ matrix.linker }}" > .cargo/config.toml
 
       - name: Build
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
         run: |
-          mkdir -p dist/mfe-player
-          cp target/release/mfe-player dist/mfe-player/
-          cp README.md LICENSE dist/mfe-player/
-          tar -C dist -czf mfe-player-linux-x86_64.tar.gz mfe-player
+          cd "target/${{ matrix.target }}/release"
+          tar czf "$GITHUB_WORKSPACE/mfe-player-${{ matrix.target }}.tar.gz" mfe-player
 
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/mfe-player.exe" `
+            -DestinationPath "mfe-player-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            mfe-player-*.tar.gz
+            mfe-player-*.zip
+          if-no-files-found: error
+
+  github-release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: mfe-player-linux-x86_64.tar.gz
+          files: dist/*
           generate_release_notes: true
+
+  # npm is also bun: bun installs npm packages and bunx runs npm bins.
+  npm:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Lay out the binaries
+        run: |
+          set -euo pipefail
+          mkdir -p \
+            npm/mfe-player-linux-x64/bin \
+            npm/mfe-player-linux-x64-musl/bin \
+            npm/mfe-player-linux-arm64/bin \
+            npm/mfe-player-darwin-x64/bin \
+            npm/mfe-player-darwin-arm64/bin \
+            npm/mfe-player-win32-x64/bin
+          tar -xzf dist/mfe-player-x86_64-unknown-linux-gnu.tar.gz  -C npm/mfe-player-linux-x64/bin
+          tar -xzf dist/mfe-player-x86_64-unknown-linux-musl.tar.gz -C npm/mfe-player-linux-x64-musl/bin
+          tar -xzf dist/mfe-player-aarch64-unknown-linux-gnu.tar.gz -C npm/mfe-player-linux-arm64/bin
+          tar -xzf dist/mfe-player-x86_64-apple-darwin.tar.gz        -C npm/mfe-player-darwin-x64/bin
+          tar -xzf dist/mfe-player-aarch64-apple-darwin.tar.gz       -C npm/mfe-player-darwin-arm64/bin
+          unzip -q dist/mfe-player-x86_64-pc-windows-msvc.zip        -d npm/mfe-player-win32-x64/bin
+          find npm -name mfe-player -type f -exec chmod +x {} +
+          node npm/scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for dir in npm/mfe-player-*; do
+            echo "publishing $dir"
+            (cd "$dir" && npm publish --access public)
+          done
+          (cd npm/mfe-player && npm publish --access public)
+
+  # pip / pipx / uv wheels, built by maturin with `bindings = "bin"`.
+  wheels:
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: auto
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: auto
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'off' }}
+          args: --release --locked --out dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  pypi:
+    needs: wheels
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install "maturin>=1.7,<2"
+
+      - name: Upload to PyPI
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: maturin upload --username __token__ --password "$PYPI_TOKEN" dist/*.whl
+
+  crates:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

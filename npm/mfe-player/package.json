@@ -1,0 +1,37 @@
+{
+  "name": "mfe-player",
+  "version": "0.2.1",
+  "description": "A plugin-driven terminal music player: mpv, ratatui, no subscription, no account.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omkargs/mfe-player.git"
+  },
+  "homepage": "https://github.com/omkargs/mfe-player",
+  "keywords": [
+    "music",
+    "tui",
+    "terminal",
+    "player",
+    "mpv"
+  ],
+  "bin": {
+    "mfe": "bin/mfe.js",
+    "mfe-player": "bin/mfe.js"
+  },
+  "files": [
+    "bin/mfe.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "optionalDependencies": {
+    "mfe-player-linux-x64": "0.2.1",
+    "mfe-player-linux-x64-musl": "0.2.1",
+    "mfe-player-linux-arm64": "0.2.1",
+    "mfe-player-darwin-x64": "0.2.1",
+    "mfe-player-darwin-arm64": "0.2.1",
+    "mfe-player-win32-x64": "0.2.1"
+  }
+}

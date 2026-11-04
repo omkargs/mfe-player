@@ -209,7 +209,7 @@ mod tests {
         fs::write(dir.join("cover.jpg"), b"not audio").unwrap();
         fs::write(dir.join("notes.txt"), b"hello").unwrap();
 
-        let tracks = scan(&[dir.clone()]);
+        let tracks = scan(std::slice::from_ref(&dir));
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].title, "first track");
         assert_eq!(tracks[0].source, "local");

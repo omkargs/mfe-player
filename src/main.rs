@@ -127,7 +127,7 @@ fn completions(shell: &str) -> String {
     match shell {
         "fish" => {
             r#"# mfe-player fish completions
-complete -c mfe -f -a "status toggle stop current completions" -d "MFE Player"
+complete -c mfe -f -a "status current share toggle stop completions" -d "MFE Player"
 complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
 complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
 "#
@@ -139,6 +139,7 @@ _mfe() {
   commands=(
     'status:show what is playing'
     'current:one-line now playing'
+    'share:copy now playing to the clipboard'
     'toggle:play/pause the background player'
     'stop:stop playback and the daemon'
     'completions:print shell completions'
@@ -148,6 +149,13 @@ _mfe() {
     '*::arg:->args'
   case $state in
     cmds) _describe 'command' commands ;;
+    args)
+      if [[ $words[2] == status ]]; then
+        _arguments '--json[JSON output]'
+      elif [[ $words[2] == completions ]]; then
+        _values 'shell' bash zsh fish
+      fi
+      ;;
   esac
 }
 _mfe "$@"
@@ -161,7 +169,7 @@ _mfe_player() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "status current toggle stop completions" -- "$cur") )
+    COMPREPLY=( $(compgen -W "status current share toggle stop completions" -- "$cur") )
   elif [ "$prev" = "completions" ]; then
     COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
   elif [ "$prev" = "status" ]; then

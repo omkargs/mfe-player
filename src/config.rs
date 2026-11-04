@@ -41,10 +41,8 @@ pub fn migrate_legacy() {
     }
     let new_cache = cache_dir();
     let old_cache = legacy_cache_dir();
-    if !new_cache.exists() && old_cache.is_dir() {
-        if fs::rename(&old_cache, &new_cache).is_err() {
-            let _ = copy_dir(&old_cache, &new_cache);
-        }
+    if !new_cache.exists() && old_cache.is_dir() && fs::rename(&old_cache, &new_cache).is_err() {
+        let _ = copy_dir(&old_cache, &new_cache);
     }
 }
 

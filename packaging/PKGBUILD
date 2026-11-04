@@ -1,0 +1,32 @@
+# Maintainer: Omkar <https://github.com/omkargs>
+pkgname=mfe-player
+pkgver=0.2.1
+pkgrel=1
+pkgdesc="Plugin-driven terminal music player: mpv, ratatui, no subscription"
+arch=('x86_64' 'aarch64')
+url="https://github.com/omkargs/mfe-player"
+license=('MIT')
+depends=('mpv' 'python' 'yt-dlp')
+optdepends=(
+  'cava: spectrum visualiser'
+  'playerctl: media keys'
+  'ffmpeg: offline downloads'
+)
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+  cargo build --release --locked
+}
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+  install -Dm755 target/release/mfe-player "$pkgdir/usr/bin/mfe-player"
+  ln -s mfe-player "$pkgdir/usr/bin/mfe"
+  install -Dm644 packaging/mfe-player.service \
+    "$pkgdir/usr/lib/systemd/user/mfe-player.service"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

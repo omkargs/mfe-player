@@ -4,6 +4,7 @@ mod audio;
 mod cava;
 mod config;
 mod daemon;
+mod doctor;
 mod ipc;
 mod library;
 mod models;
@@ -71,6 +72,33 @@ fn main() -> Result<()> {
                     }
                 }
                 None => println!("nothing playing"),
+            }
+            return Ok(());
+        }
+        Some("doctor") => {
+            std::process::exit(doctor::run());
+        }
+        Some("cache") => {
+            let artwork = config::artwork_dir();
+            match raw_args.get(1).map(String::as_str) {
+                Some("clean") | Some("clear") => {
+                    let freed = dir_size(&artwork);
+                    let _ = std::fs::remove_dir_all(&artwork);
+                    println!("artwork cache cleared · freed {}", human_size(freed));
+                }
+                _ => {
+                    println!(
+                        "artwork: {} ({})",
+                        artwork.display(),
+                        human_size(dir_size(&artwork))
+                    );
+                    println!(
+                        "downloads: {} ({})",
+                        config::downloads_dir().display(),
+                        human_size(dir_size(&config::downloads_dir()))
+                    );
+                    println!("run `mfe cache clean` to clear the artwork cache");
+                }
             }
             return Ok(());
         }
@@ -149,11 +177,37 @@ enum CliAction {
     Exit,
 }
 
+fn dir_size(path: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                dir_size(&path)
+            } else {
+                entry.metadata().map(|meta| meta.len()).unwrap_or(0)
+            }
+        })
+        .sum()
+}
+
+fn human_size(bytes: u64) -> String {
+    match bytes {
+        0 => "empty".to_string(),
+        bytes if bytes < 1024 => format!("{bytes} B"),
+        bytes if bytes < 1024 * 1024 => format!("{:.1} KiB", bytes as f64 / 1024.0),
+        bytes => format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0)),
+    }
+}
+
 fn completions(shell: &str) -> String {
     match shell {
         "fish" => {
             r#"# mfe-player fish completions
-complete -c mfe -f -a "status current share theme toggle stop completions" -d "MFE Player"
+complete -c mfe -f -a "status current share theme doctor cache toggle stop completions" -d "MFE Player"
 complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
 complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
 "#
@@ -167,6 +221,8 @@ _mfe() {
     'current:one-line now playing'
     'share:copy now playing to the clipboard'
     'theme:show or adopt a colour theme'
+    'doctor:check mpv, plugins, config and clipboard'
+    'cache:show or clear the artwork cache'
     'toggle:play/pause the background player'
     'stop:stop playback and the daemon'
     'completions:print shell completions'
@@ -198,11 +254,13 @@ _mfe_player() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "status current share theme toggle stop completions" -- "$cur") )
+    COMPREPLY=( $(compgen -W "status current share theme doctor cache toggle stop completions" -- "$cur") )
   elif [ "$prev" = "completions" ]; then
     COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
   elif [ "$prev" = "theme" ]; then
     COMPREPLY=( $(compgen -W "adopt list" -- "$cur") )
+  elif [ "$prev" = "cache" ]; then
+    COMPREPLY=( $(compgen -W "clean" -- "$cur") )
   elif [ "$prev" = "status" ]; then
     COMPREPLY=( $(compgen -W "--json" -- "$cur") )
   fi
@@ -231,7 +289,9 @@ fn cli_action() -> CliAction {
                mfe-player status --json   waybar/polybar/tmux friendly JSON
                mfe-player theme           print the current theme
                mfe-player theme list      every built-in theme
-               mfe-player theme adopt     derive a theme from your wallpaper\n\
+               mfe-player theme adopt     derive a theme from your wallpaper
+               mfe-player doctor          check mpv, plugins, config, clipboard
+               mfe-player cache [clean]   show or clear the artwork cache\n\
                mfe-player current         one-line now playing\n\
                mfe-player share           copy now playing to the clipboard\n\
                mfe-player toggle          play/pause the background player\n\

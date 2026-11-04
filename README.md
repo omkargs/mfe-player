@@ -133,6 +133,18 @@ First launch writes sane defaults to `~/.config/mfe-player/` and installs the bu
 
 If you just want the prebuilt binary, grab the tarball from [Releases](https://github.com/omkargs/mfe-player/releases).
 
+Packaging files live in the repo so you don't have to invent them:
+
+```bash
+packaging/PKGBUILD                    # Arch (AUR-style, builds from source)
+flake.nix                             # Nix flake: nix run .#default
+packaging/homebrew/mfe-player.rb      # Homebrew formula template
+packaging/mfe-player.service          # systemd --user unit for the daemon
+install.sh                            # build from source and install to ~/.local/bin
+```
+
+Not in the official repos yet — these are the real files, waiting for a tap and an AUR push.
+
 ---
 
 ## ⌨️ Hotkeys
@@ -227,6 +239,8 @@ mfe current                 # ▶ Get Lucky — Daft Punk
 mfe share                   # copy now playing to the clipboard
 mfe toggle                  # pause/resume
 mfe completions bash        # also: zsh, fish
+mfe doctor                  # why is the audio not playing?
+mfe cache clean             # free the artwork cache
 ```
 
 ---
@@ -362,10 +376,11 @@ The rest is a real plan, roughly in build order.
 - [ ] Platform media controls: SMTC on Windows, Now Playing on macOS (MPRIS is Linux-only).
 
 ### Phase 3 — installable, and able to diagnose itself
-- [ ] `mfe doctor` — checks mpv, yt-dlp, python3, socket, config and clipboard, then prints the exact fix.
-- [ ] `mfe cache --clean` plus LRU eviction for the artwork cache.
-- [ ] `mfe update` and a working `install.sh` one-liner.
-- [ ] AUR, Nix flake, Homebrew tap; winget/scoop once Windows lands.
+- [x] `mfe doctor` — checks mpv, yt-dlp, python3, socket, config, plugins, clipboard and wallpaper, then prints the exact fix.
+- [x] `mfe cache clean` plus `mfe cache` for a size readout.
+- [x] `install.sh`, AUR `PKGBUILD`, Nix flake, Homebrew formula template and a systemd unit.
+- [ ] `mfe update`.
+- [ ] LRU eviction for the artwork cache.
 - [ ] A `vhs` demo GIF for this README, because a wall of text is not a demo.
 
 ### Phase 4 — social, on your terms

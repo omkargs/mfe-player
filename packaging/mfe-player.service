@@ -1,0 +1,16 @@
+[Unit]
+Description=mfe-player background playback daemon
+Documentation=https://github.com/omkargs/mfe-player
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/mfe-player --daemon
+# The daemon detaches mpv itself; restart it if it ever dies unexpectedly.
+Restart=on-failure
+RestartSec=3
+# mfe-player uses the user's mpv socket, config and cache.
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target

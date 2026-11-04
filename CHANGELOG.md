@@ -38,6 +38,14 @@
 - **Aesthetic pass:** rounded borders on every panel and popup, a truecolor
   gradient header logo, and an eighth-block progress bar with a gradient fill
   and a smooth head instead of a flat gauge.
+- **`mfe doctor`:** checks mpv, python3, yt-dlp, ffmpeg, cava, playerctl,
+  config parsing, installed plugins, mpv socket, daemon, clipboard, wallpaper
+  detection and truecolor support, then prints the exact fix for anything
+  missing.
+- **`mfe cache` / `mfe cache clean`:** report and clear the artwork cache
+  without touching downloaded audio.
+- **Packaging:** AUR-style `packaging/PKGBUILD`, a Nix flake, a Homebrew
+  formula template and a systemd `--user` unit for the daemon.
 - **Portable transport:** mpv IPC now sits behind `src/ipc.rs` — Unix sockets
   on Linux/macOS, named pipes on Windows. Process liveness uses `kill(pid, 0)`
   instead of `/proc`, paths honour `APPDATA`/`LOCALAPPDATA`/`Library/Caches`,

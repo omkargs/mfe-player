@@ -191,7 +191,7 @@ fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
 
 /// Ask the desktop what wallpaper it is using. Best effort: every probe is
 /// optional and failures are ignored.
-fn detect() -> Option<PathBuf> {
+pub fn detect() -> Option<PathBuf> {
     unix_desktop_detect()
         .or_else(macos_detect)
         .or_else(windows_detect)

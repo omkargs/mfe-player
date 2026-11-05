@@ -76,6 +76,8 @@ This is **MFE Player** — **M**usic **F**or **E**veryone. It's MIT-licensed, it
 | **Your own files** | Point `library_paths` at real folders and press `8`. Tags and embedded cover art are read with `lofty`; no upload, no account, no phoning home. |
 | **Internet Archive** | A metadata plugin searches 800 years of free music, live sets and public-domain recordings on archive.org. |
 | **Radio Browser** | Search live stations worldwide with the `Radio` plugin and pipe them straight into mpv (ICY metadata and all). |
+| **Cross-platform** | Linux is the tested target. macOS builds in CI with native caches and clipboard. Windows uses mpv named pipes and is experimental until someone runs it on real hardware. |
+| **Install anywhere** | One installer, plus npm/bun, pip/pipx/uv wheels, cargo, GitHub releases, Nix, AUR and a Homebrew formula — all built from the same tag. |
 | **Free of charge, forever** | MIT license. One binary, roughly the size of a single album cover, and it never asks for a credit card. |
 
 ---
@@ -101,27 +103,42 @@ Terminal font does the rest. It looks even better with a real cava panel on the 
 
 ## 🛠 Install it
 
-**Linux** is the tested target. **macOS** builds in CI and uses the same Unix-socket transport. **Windows** is wired up too — mpv speaks named pipes and the IPC layer now handles that — but it is marked experimental until someone runs it on real hardware and tells me what broke.
-
-The one command that does everything:
+### One command
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/omkargs/mfe-player/master/install.sh | bash
 ```
 
-It installs the player **and** mpv, python3, yt-dlp, ffmpeg, cava and playerctl with whatever package manager your distro has, writes bash/fish/zsh completions, then runs `mfe doctor` so a broken audio stack is caught immediately. No flags, no prompts.
+This is the one I actually run. It opens with the MFE PLAYER wordmark, detects your package manager, installs **mpv, python3, yt-dlp, ffmpeg, cava and playerctl**, drops the player in `~/.local/bin`, writes bash/fish/zsh completions and finishes with `mfe doctor` so a broken audio stack is caught before you press space. No flags, no prompts. Linux and macOS.
 
-Prefer your own package manager? Every tag publishes all of these from the same build:
+### Pick your package manager
 
-```bash
-npm install -g mfe-player        # bun add -g mfe-player · bunx mfe-player
-pipx install mfe-player          # uv tool install mfe-player · pip install mfe-player
-cargo install mfe-player         # cargo binstall mfe-player (prebuilt)
-```
+Every tagged release builds all of these from the same commit:
 
-`pip`/`pipx` install the `mfe-player` command; npm, cargo and the installer also give you the short `mfe` alias.
+| Channel | Install | Also works |
+|---|---|---|
+| **npm / bun** | `npm install -g mfe-player` | `bun add -g mfe-player`, `bunx mfe-player` |
+| **pip / pipx / uv** | `pipx install mfe-player` | `uv tool install mfe-player`, `pip install mfe-player` |
+| **cargo** | `cargo install mfe-player` | `cargo binstall mfe-player` (prebuilt, no compile) |
+| **GitHub releases** | the tarball for your target triple | `install.sh` uses it automatically |
+| **Arch** | `packaging/PKGBUILD` | builds from source; AUR push pending |
+| **Nix** | `nix run github:omkargs/mfe-player` | `flake.nix` with runtime `PATH` wrapping |
+| **Homebrew** | `packaging/homebrew/mfe-player.rb` | tap pending |
+| **systemd** | `packaging/mfe-player.service` | `systemctl --user enable --now mfe-player` |
 
-From source, if you want to poke at it:
+The npm packages use per-platform `optionalDependencies` (esbuild-style: **no postinstall download**, and bun gets the same package for free). The PyPI wheels are the real Rust binary via maturin `bindings = "bin"`, so no Python glue and no compiler at install time. `pip`/`pipx` install the `mfe-player` command; npm, cargo, Nix and the installer also give you the short `mfe` alias.
+
+### Platforms
+
+| Platform | Status | What it uses |
+|---|---|---|
+| **Linux** | tested | Unix socket, MPRIS, cava, the full stack |
+| **macOS** | CI-built, same code path | Unix socket, `kill(pid, 0)`, `~/Library/Caches`, `pbcopy`/`pbpaste` |
+| **Windows** | experimental | named-pipe mpv IPC, `DETACHED_PROCESS`, `tasklist`/`taskkill`, `clip`/PowerShell clipboard, plugins via `python3` |
+
+CI builds Linux, macOS and Windows on every push. Windows is marked experimental until someone actually runs it on hardware and tells me what broke; the transport layer is already there, so it should be a short list.
+
+### From source
 
 ```bash
 git clone https://github.com/omkargs/mfe-player.git
@@ -133,32 +150,23 @@ ln -sf ~/.local/bin/mfe-player ~/.local/bin/mfe
 
 You need **Rust 1.85+**, **mpv**, **yt-dlp** and **python3** for the source build.
 
+### After it is installed
+
 ```bash
 mfe                     # open the TUI
 mfe daft punk           # open with search results waiting
 mfe status              # what's playing?
 mfe toggle              # play/pause the background player
 mfe stop                # stop playback and the daemon
+mfe doctor              # why is the audio not playing?
+mfe theme adopt         # derive the UI colours from your wallpaper
+mfe cache               # artwork size + LRU limit
+mfe update              # grab the latest release (--check to only look)
 ```
 
 First launch writes sane defaults to `~/.config/mfe-player/` and installs the bundled plugins. It also migrates an old `nuclear-tui` config automatically, because losing your queue to a rename is a crime.
 
-If you just want the prebuilt binary, grab the tarball from [Releases](https://github.com/omkargs/mfe-player/releases).
-
-Packaging files live in the repo so you don't have to invent them:
-
-```bash
-install.sh                            # one-command install + deps + doctor
-npm/                                  # npm/bun packages (optionalDependencies)
-pyproject.toml                        # maturin wheels for pip / pipx / uv
-packaging/PKGBUILD                    # Arch (AUR-style, builds from source)
-flake.nix                             # Nix flake: nix run .#default
-packaging/homebrew/mfe-player.rb      # Homebrew formula template
-packaging/mfe-player.service          # systemd --user unit for the daemon
-.github/workflows/release.yml         # binaries → GitHub, npm, PyPI, crates.io
-```
-
-Not in the official repos yet — these are the real files, waiting for a tap and an AUR push.
+Not in the official distro repos yet — the packaging files are the real thing, waiting for a tap and an AUR push.
 
 ---
 
@@ -289,6 +297,14 @@ mfe theme                # what am I using right now?
 
 Your terminal still does the actual blurring — MFE just stops painting over it. kitty, wezterm, alacritty, foot, ghostty and Konsole all support opacity. On a terminal without transparency, use the palette half: it still matches the colours.
 
+### The rest of the look
+
+- **Rounded borders** on every panel, popup and dialog — one border type, applied everywhere.
+- **Truecolor gradient wordmark** in the header and an eighth-block progress bar (`▏▎▍▌▋▊▉`) with a gradient fill and a smooth head, instead of a flat gauge.
+- **Solid chrome, transparent base.** `Alt+W` removes only the base background; lists, popups and the inspector keep their own panel colour, so text survives a busy photo.
+- **Wallpaper palette** keeps the wallpaper's hue in the dark panels, pulls a vivid accent from its dominant colour and rotates the hue for a second accent. Green, yellow and red stay semantic so status still means something.
+- **Graceful fallbacks.** No truecolor? The palettes approximate. No wallpaper detected? The palette half is skipped instead of guessing.
+
 ---
 
 ## 🔌 Plugins are just Python
@@ -373,7 +389,7 @@ Want scrobbles without handing over a social graph? Paste a ListenBrainz user to
 
 ## 🗺 Roadmap
 
-Shipped: search, playlists, queue, favourites, lyrics, radio, prefetch, downloads, MPRIS, cava, EQ, normalisation, sleep timer, background daemon, 12 themes, speed, smart fade, ReplayGain, ListenBrainz, Internet Archive, Radio Browser, local library, album art, history, stats, sharing, CLI JSON, transparent background, wallpaper palettes.
+Shipped: search, playlists, queue, favourites, lyrics, radio, prefetch, downloads, MPRIS, cava, EQ, normalisation, sleep timer, background daemon, 12 themes, speed, smart fade, ReplayGain, ListenBrainz, Internet Archive, Radio Browser, local library, album art, history, stats, sharing, CLI JSON, transparent background, wallpaper palettes, rounded/gradient UI, macOS + Windows transport, `mfe doctor`/`cache`/`update`, npm + PyPI + crates packaging.
 
 The rest is a real plan, roughly in build order.
 

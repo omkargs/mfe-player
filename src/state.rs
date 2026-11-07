@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 
 use anyhow::{Context, Result};
@@ -54,6 +55,9 @@ pub struct PersistedState {
     /// Custom ten-band EQ curve in dB.
     #[serde(default)]
     pub eq_gains: Vec<f64>,
+    /// Last known position per track id, for long mixes and podcasts.
+    #[serde(default)]
+    pub bookmarks: HashMap<String, f64>,
 }
 
 impl Default for PersistedState {
@@ -78,6 +82,7 @@ impl Default for PersistedState {
             normalize: false,
             history: Vec::new(),
             eq_gains: Vec::new(),
+            bookmarks: HashMap::new(),
         }
     }
 }
@@ -119,5 +124,25 @@ impl PersistedState {
         fs::write(&tmp, raw).with_context(|| format!("writing {}", tmp.display()))?;
         fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_state_files_get_empty_bookmarks() {
+        let state: PersistedState = serde_json::from_str("{}").unwrap();
+        assert!(state.bookmarks.is_empty());
+    }
+
+    #[test]
+    fn bookmarks_survive_a_round_trip() {
+        let mut state = PersistedState::default();
+        state.bookmarks.insert("track:1".to_string(), 123.5);
+        let json = serde_json::to_string(&state).unwrap();
+        let back: PersistedState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.bookmarks.get("track:1"), Some(&123.5));
     }
 }

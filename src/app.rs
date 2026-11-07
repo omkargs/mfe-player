@@ -828,6 +828,8 @@ pub struct App {
     /// The track and position written to disk when the previous session quit.
     resume_at: Option<f64>,
     resume_track_id: Option<String>,
+    /// Per-track resume positions (long mixes, podcasts).
+    bookmarks: HashMap<String, f64>,
     /// Which recent query the search field is currently cycling through.
     history_cursor: Option<usize>,
     events_tx: Sender<AppEvent>,
@@ -1048,6 +1050,7 @@ impl App {
             pending_seek: None,
             resume_at,
             resume_track_id,
+            bookmarks: persisted.bookmarks.clone(),
             history_cursor: None,
             events_tx,
             events_rx,
@@ -3768,6 +3771,17 @@ impl App {
         self.queue_selected = index;
         self.now_playing = Some(track.clone());
         self.announce(&track);
+        let start_at = start_at.or_else(|| {
+            self.bookmarks
+                .get(&track.id)
+                .copied()
+                .filter(|position| *position > 5.0)
+                .filter(|position| {
+                    track
+                        .duration
+                        .is_none_or(|duration| *position < duration as f64 - 5.0)
+                })
+        });
         self.pending_seek = start_at;
         self.mark_dirty();
         self.start_stream(track);
@@ -6006,6 +6020,13 @@ impl App {
     }
 
     pub fn persist(&self) {
+        let mut bookmarks = self.bookmarks.clone();
+        if let Some(track) = &self.now_playing {
+            let position = self.audio_snapshot().position;
+            if position > 5.0 {
+                bookmarks.insert(track.id.clone(), position);
+            }
+        }
         let state = PersistedState {
             playlists: self.playlists.clone(),
             favorites: self.favorites.clone(),
@@ -6030,6 +6051,7 @@ impl App {
             normalize: self.normalize,
             history: self.history.clone(),
             eq_gains: self.eq_gains.to_vec(),
+            bookmarks,
         };
         let _ = state.save();
     }

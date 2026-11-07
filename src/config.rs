@@ -283,7 +283,7 @@ impl Default for AppConfig {
             listenbrainz_token: String::new(),
             fade_seconds: 0.0,
             replaygain: "off".to_string(),
-            transparent: false,
+            transparent: true,
             wallpaper: String::new(),
             ambient_art: false,
         }
@@ -294,7 +294,8 @@ const DEFAULT_CONFIG: &str = r#"# mfe-player configuration
 # Edit and restart the app. Every key is optional.
 
 # Colour theme: mfe | gruvbox | nord | mono | matrix | rose |
-#               catppuccin | dracula | tokyo-night | solarized | amber | ocean
+#               catppuccin | dracula | tokyo-night | solarized | amber | ocean |
+#               auto (your terminal's own 16 colours) | wallpaper
 theme = "mfe"
 
 # Playback steps (seconds / percent).
@@ -347,8 +348,8 @@ replaygain = "off"
 eq_gains = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # Let the terminal's transparency show your wallpaper through the app.
-# Toggle at runtime with Alt+W.
-transparent = false
+# On by default; toggle at runtime with Alt+W.
+transparent = true
 
 # Optional explicit wallpaper for theme = "wallpaper". Empty means "ask the
 # compositor" (swww, hyprpaper, GNOME, Plasma, macOS, Windows).
@@ -438,4 +439,15 @@ pub fn ensure_dirs() -> Result<()> {
     fs::create_dir_all(downloads_dir())
         .with_context(|| format!("creating {}", downloads_dir().display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transparency_is_the_default() {
+        assert!(AppConfig::default().transparent);
+        assert!(!AppConfig::default().ambient_art);
+    }
 }

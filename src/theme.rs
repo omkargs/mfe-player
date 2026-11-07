@@ -216,6 +216,25 @@ const OCEAN: Theme = Theme {
     purple: Color::Rgb(150, 170, 255),
 };
 
+/// The terminal's own palette. Every surface is `Reset`, so it inherits
+/// whatever background and foreground the user already runs, and the accents
+/// are the 16 ANSI colours rather than fixed RGB values.
+const AUTO: Theme = Theme {
+    bg: Color::Reset,
+    panel: Color::Reset,
+    panel2: Color::Reset,
+    border: Color::DarkGray,
+    fg: Color::Reset,
+    dim: Color::Gray,
+    faint: Color::DarkGray,
+    accent: Color::Cyan,
+    accent2: Color::Magenta,
+    green: Color::Green,
+    yellow: Color::Yellow,
+    red: Color::Red,
+    purple: Color::Magenta,
+};
+
 static CURRENT: RwLock<Theme> = RwLock::new(MFE);
 
 /// The accent pair to restore when the ambient tint is disabled or a cover
@@ -277,6 +296,7 @@ pub const THEME_NAMES: &[&str] = &[
     "solarized",
     "amber",
     "ocean",
+    "auto",
     "wallpaper",
 ];
 
@@ -294,6 +314,7 @@ fn preset(name: &str) -> Option<Theme> {
         "solarized" | "solarized-dark" | "solar" => Some(SOLARIZED),
         "amber" | "retro" | "terminal" => Some(AMBER),
         "ocean" | "deep" | "abyss" => Some(OCEAN),
+        "auto" | "ansi" | "terminal-palette" => Some(AUTO),
         // "wallpaper" is resolved from the desktop, not from a fixed palette.
         _ => None,
     }
@@ -314,8 +335,155 @@ pub fn set_theme(name: &str) -> bool {
     true
 }
 
+/// How many colours the terminal can actually show. Resolved once from the
+/// environment (override with `MFE_COLOR=truecolor|256|16`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorMode {
+    True,
+    Ansi256,
+    Ansi16,
+}
+
+fn color_mode() -> ColorMode {
+    use std::sync::OnceLock;
+
+    static MODE: OnceLock<ColorMode> = OnceLock::new();
+    *MODE.get_or_init(|| {
+        if let Ok(value) = std::env::var("MFE_COLOR") {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "truecolor" | "24bit" | "true" => return ColorMode::True,
+                "256" | "ansi256" => return ColorMode::Ansi256,
+                "16" | "ansi" | "ansi16" => return ColorMode::Ansi16,
+                _ => {}
+            }
+        }
+        if let Ok(value) = std::env::var("COLORTERM") {
+            if value.contains("truecolor") || value.contains("24bit") {
+                return ColorMode::True;
+            }
+        }
+        if std::env::var("WT_SESSION").is_ok() {
+            return ColorMode::True;
+        }
+        if std::env::var("TERM")
+            .map(|term| term.contains("256color") || term.contains("direct"))
+            .unwrap_or(false)
+        {
+            return ColorMode::Ansi256;
+        }
+        if cfg!(windows) {
+            ColorMode::Ansi256
+        } else {
+            ColorMode::Ansi16
+        }
+    })
+}
+
+/// Downgrade an RGB colour to the closest colour the terminal has. Named
+/// colours and `Reset` are already portable and pass through untouched.
+fn adapt(color: Color) -> Color {
+    let Color::Rgb(r, g, b) = color else {
+        return color;
+    };
+    match color_mode() {
+        ColorMode::True => color,
+        ColorMode::Ansi256 => Color::Indexed(nearest_256(r, g, b)),
+        ColorMode::Ansi16 => Color::Indexed(nearest_16(r, g, b)),
+    }
+}
+
+fn adapt_theme(theme: Theme) -> Theme {
+    if color_mode() == ColorMode::True {
+        return theme;
+    }
+    Theme {
+        bg: adapt(theme.bg),
+        panel: adapt(theme.panel),
+        panel2: adapt(theme.panel2),
+        border: adapt(theme.border),
+        fg: adapt(theme.fg),
+        dim: adapt(theme.dim),
+        faint: adapt(theme.faint),
+        accent: adapt(theme.accent),
+        accent2: adapt(theme.accent2),
+        green: adapt(theme.green),
+        yellow: adapt(theme.yellow),
+        red: adapt(theme.red),
+        purple: adapt(theme.purple),
+    }
+}
+
+fn distance(a: (u8, u8, u8), b: (u8, u8, u8)) -> u32 {
+    let dr = i32::from(a.0) - i32::from(b.0);
+    let dg = i32::from(a.1) - i32::from(b.1);
+    let db = i32::from(a.2) - i32::from(b.2);
+    (dr * dr + dg * dg + db * db) as u32
+}
+
+fn cube(value: u8) -> u8 {
+    (((u16::from(value) * 5 + 127) / 255) as u8).min(5)
+}
+
+fn cube_level(step: u8) -> u8 {
+    if step == 0 {
+        0
+    } else {
+        55 + step * 40
+    }
+}
+
+fn nearest_256(r: u8, g: u8, b: u8) -> u8 {
+    let (ri, gi, bi) = (cube(r), cube(g), cube(b));
+    let cube_index = 16 + 36 * ri + 6 * gi + bi;
+    let cube_rgb = (cube_level(ri), cube_level(gi), cube_level(bi));
+    let cube_distance = distance((r, g, b), cube_rgb);
+
+    // The 24-step grey ramp (232-255) is much better for neutral colours.
+    let grey = ((i32::from(r) + i32::from(g) + i32::from(b)) / 3).clamp(0, 255) as u8;
+    let grey_step = (((i16::from(grey) - 8) / 10).clamp(0, 23)) as u8;
+    let grey_level = 8 + grey_step * 10;
+    let grey_index = 232 + grey_step;
+    let grey_distance = distance((r, g, b), (grey_level, grey_level, grey_level));
+
+    if grey_distance < cube_distance {
+        grey_index
+    } else {
+        cube_index
+    }
+}
+
+fn nearest_16(r: u8, g: u8, b: u8) -> u8 {
+    const PALETTE: [(u8, u8, u8); 16] = [
+        (0, 0, 0),
+        (128, 0, 0),
+        (0, 128, 0),
+        (128, 128, 0),
+        (0, 0, 128),
+        (128, 0, 128),
+        (0, 128, 128),
+        (192, 192, 192),
+        (128, 128, 128),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (0, 0, 255),
+        (255, 0, 255),
+        (0, 255, 255),
+        (255, 255, 255),
+    ];
+    let mut best = (u32::MAX, 0u8);
+    for (index, colour) in PALETTE.iter().enumerate() {
+        let d = distance((r, g, b), *colour);
+        if d < best.0 {
+            best = (d, index as u8);
+        }
+    }
+    best.1
+}
+
 pub fn get() -> Theme {
-    CURRENT.read().map(|theme| *theme).unwrap_or(MFE)
+    let theme = CURRENT.read().map(|theme| *theme).unwrap_or(MFE);
+    adapt_theme(theme)
 }
 
 /// Shift the accent colours to the dominant colour of the current cover.
@@ -363,6 +531,7 @@ pub fn canonical_name(name: &str) -> Option<&'static str> {
         "solarized" | "solarized-dark" | "solar" => "solarized",
         "amber" | "retro" | "terminal" => "amber",
         "ocean" | "deep" | "abyss" => "ocean",
+        "auto" | "ansi" | "terminal-palette" => "auto",
         "wallpaper" | "wall" | "desktop" => "wallpaper",
         _ => return None,
     })
@@ -421,6 +590,26 @@ mod tests {
         assert_eq!(bg(), theme.bg);
         assert_eq!(panel(), theme.panel);
         assert_eq!(panel2(), theme.panel2);
+    }
+
+    #[test]
+    fn auto_theme_inherits_the_terminal_palette() {
+        assert!(set_theme("auto"));
+        let theme = get();
+        assert_eq!(theme.bg, Color::Reset);
+        assert_eq!(theme.panel, Color::Reset);
+        assert_eq!(theme.fg, Color::Reset);
+        assert_eq!(theme.accent, Color::Cyan);
+        set_theme("mfe");
+    }
+
+    #[test]
+    fn colour_fallbacks_stay_inside_their_palette() {
+        assert_eq!(nearest_256(255, 0, 0), 196);
+        assert_eq!(nearest_256(128, 128, 128), 244);
+        assert!(nearest_16(12, 200, 180) < 16);
+        assert_eq!(nearest_16(0, 0, 0), 0);
+        assert_eq!(nearest_16(255, 255, 255), 15);
     }
 
     #[test]

@@ -25,12 +25,30 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         area,
     );
 
+    // Below this there is no honest way to show lists, borders and a player
+    // bar at once. Say so instead of drawing a shredded layout.
+    if area.width < 24 || area.height < 10 {
+        frame.render_widget(
+            Paragraph::new(format!(
+                "mfe · {}×{} — terminal too small",
+                area.width, area.height
+            ))
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(th().dim).bg(theme::bg())),
+            area,
+        );
+        return;
+    }
+
+    // Squeeze the chrome on short terminals before squeezing the list.
+    let header = if area.height >= 16 { 3 } else { 1 };
+    let player = if area.height >= 14 { 4 } else { 3 };
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(4),
+            Constraint::Length(header),
+            Constraint::Min(5),
+            Constraint::Length(player),
             Constraint::Length(1),
         ])
         .split(area);
@@ -122,6 +140,10 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         },
     );
 
+    if area.height < 3 {
+        return;
+    }
+
     let rule = "─".repeat(area.width as usize);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
@@ -153,7 +175,14 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let cava_left = app.cava_enabled && cava_width == 0;
 
-    let mut constraints = vec![Constraint::Length(22), Constraint::Min(30)];
+    // Narrow terminals get the list, not a 22-column sidebar glued to a
+    // 16-column list. The number keys still switch views.
+    let sidebar = area.width >= 76;
+    let mut constraints = Vec::new();
+    if sidebar {
+        constraints.push(Constraint::Length(22));
+    }
+    constraints.push(Constraint::Min(20));
     if detail_width > 0 {
         constraints.push(Constraint::Length(detail_width));
     }
@@ -162,9 +191,13 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let cols = Layout::horizontal(constraints).split(area);
 
-    draw_sidebar(frame, app, cols[0], cava_left);
-    draw_main(frame, app, cols[1]);
-    let mut next = 2;
+    let mut next = 0;
+    if sidebar {
+        draw_sidebar(frame, app, cols[next], cava_left);
+        next += 1;
+    }
+    draw_main(frame, app, cols[next]);
+    next += 1;
     if detail_width > 0 {
         draw_inspector(frame, app, cols[next]);
         next += 1;
@@ -1913,8 +1946,12 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
         rows[0],
     );
 
-    let gauge_area =
-        Layout::horizontal([Constraint::Min(20), Constraint::Length(34)]).split(rows[1]);
+    let wide = inner.width >= 64;
+    let gauge_area = if wide {
+        Layout::horizontal([Constraint::Min(20), Constraint::Length(34)]).split(rows[1])
+    } else {
+        Layout::horizontal([Constraint::Min(10)]).split(rows[1])
+    };
     let duration = snapshot.duration.max(
         app.now_playing
             .as_ref()
@@ -1978,19 +2015,21 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     if let Some(sleep) = app.sleep_label() {
         mode.push_str(&format!("  {sleep}"));
     }
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            truncate(&mode, gauge_area[1].width as usize),
-            Style::default().fg(if snapshot.paused {
-                th().yellow
-            } else {
-                th().dim
-            }),
-        )))
-        .alignment(Alignment::Right)
-        .style(Style::default().bg(theme::panel2())),
-        gauge_area[1],
-    );
+    if wide {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                truncate(&mode, gauge_area[1].width as usize),
+                Style::default().fg(if snapshot.paused {
+                    th().yellow
+                } else {
+                    th().dim
+                }),
+            )))
+            .alignment(Alignment::Right)
+            .style(Style::default().bg(theme::panel2())),
+            gauge_area[1],
+        );
+    }
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {

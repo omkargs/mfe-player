@@ -18,7 +18,7 @@
 
 ---
 
-## 😤 The rant
+## The reason i build this shit :
 
 I'm going to be honest with you: I built this because I got tired of being farmed.
 
@@ -37,7 +37,7 @@ Some things I got tired of, specifically:
 - **Hi-Fi tiers** so I can hear the ads in higher fidelity.
 - **"Sign in to continue listening"** — to music I already paid for.
 - **$11.99 a month**, forever, for a library I could have ripped in 2006 and owned.
-- **40 GB of RAM** for a UI that needs one text box and a play button.
+- **4 GB of RAM** for a UI that needs one text box and a play button.
 
 No account. No telemetry. No "recommended for you" — I know what I want to listen to, that's why I searched for it. No dark patterns. Just a search box, your music, and every key you need.
 

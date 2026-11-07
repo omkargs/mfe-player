@@ -327,11 +327,23 @@ pub enum PaletteAction {
     ToggleTransparency,
     ToggleAmbientArt,
     ToggleNotifications,
+    SmartRecentlyAdded,
+    SmartNeverPlayed,
+    SmartMostPlayed,
+    SmartOnRepeat,
     AdoptWallpaper,
     ToggleCava,
     Background,
     Help,
     Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmartRule {
+    RecentlyAdded,
+    NeverPlayed,
+    MostPlayed,
+    OnRepeat,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -611,6 +623,26 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         label: "Toggle desktop notifications",
         hint: "config",
         action: PaletteAction::ToggleNotifications,
+    },
+    PaletteItem {
+        label: "Queue recently added (library)",
+        hint: "smart",
+        action: PaletteAction::SmartRecentlyAdded,
+    },
+    PaletteItem {
+        label: "Queue never played (library)",
+        hint: "smart",
+        action: PaletteAction::SmartNeverPlayed,
+    },
+    PaletteItem {
+        label: "Queue most played",
+        hint: "smart",
+        action: PaletteAction::SmartMostPlayed,
+    },
+    PaletteItem {
+        label: "Queue on repeat",
+        hint: "smart",
+        action: PaletteAction::SmartOnRepeat,
     },
     PaletteItem {
         label: "Adopt wallpaper colours",
@@ -4421,6 +4453,59 @@ impl App {
             .collect()
     }
 
+    /// Turn a smart rule into a concrete list of tracks. Rules read only local
+    /// state (library + history), so they work offline and never hit a plugin.
+    fn smart_tracks(&self, rule: SmartRule) -> Vec<Track> {
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        for entry in &self.history {
+            *counts.entry(entry.track.id.as_str()).or_default() += 1;
+        }
+
+        match rule {
+            SmartRule::RecentlyAdded => {
+                let mut tracks = self.library.clone();
+                tracks.reverse();
+                tracks
+            }
+            SmartRule::NeverPlayed => self
+                .library
+                .iter()
+                .filter(|track| !counts.contains_key(track.id.as_str()))
+                .cloned()
+                .collect(),
+            SmartRule::MostPlayed | SmartRule::OnRepeat => {
+                let minimum = if rule == SmartRule::OnRepeat { 3 } else { 1 };
+                let mut played: Vec<(&str, usize, Track)> = Vec::new();
+                for entry in &self.history {
+                    let count = counts[entry.track.id.as_str()];
+                    if count < minimum {
+                        continue;
+                    }
+                    if played
+                        .iter()
+                        .any(|(id, _, _)| *id == entry.track.id.as_str())
+                    {
+                        continue;
+                    }
+                    played.push((entry.track.id.as_str(), count, entry.track.clone()));
+                }
+                played.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.2.title.cmp(&b.2.title)));
+                played.into_iter().map(|(_, _, track)| track).collect()
+            }
+        }
+    }
+
+    fn play_smart(&mut self, rule: SmartRule, label: &str) {
+        let tracks = self.smart_tracks(rule);
+        if tracks.is_empty() {
+            self.flash(format!("no tracks for “{label}” yet"));
+            return;
+        }
+        self.flash(format!("{label}: {} track(s)", tracks.len()));
+        self.queue = tracks;
+        self.play_queue_index(0);
+    }
+
     pub fn current_view_tracks(&self) -> Vec<Track> {
         match self.view {
             View::Search => self.search_results.tracks.clone(),
@@ -5240,6 +5325,14 @@ impl App {
             PaletteAction::ToggleTransparency => self.toggle_transparency(),
             PaletteAction::ToggleAmbientArt => self.toggle_ambient_art(),
             PaletteAction::ToggleNotifications => self.toggle_notifications(),
+            PaletteAction::SmartRecentlyAdded => {
+                self.play_smart(SmartRule::RecentlyAdded, "recently added")
+            }
+            PaletteAction::SmartNeverPlayed => {
+                self.play_smart(SmartRule::NeverPlayed, "never played")
+            }
+            PaletteAction::SmartMostPlayed => self.play_smart(SmartRule::MostPlayed, "most played"),
+            PaletteAction::SmartOnRepeat => self.play_smart(SmartRule::OnRepeat, "on repeat"),
             PaletteAction::AdoptWallpaper => {
                 match theme::adopt_wallpaper(Some(&self.config.wallpaper)) {
                     Ok(path) => {

@@ -37,6 +37,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .style(Style::default().fg(th().dim).bg(theme::bg())),
             area,
         );
+        if app.ascii_icons() {
+            ascii_safe(frame);
+        }
         return;
     }
 
@@ -60,6 +63,79 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     if app.overlay.is_some() {
         draw_overlay(frame, app, area);
+    }
+
+    if app.ascii_icons() {
+        ascii_safe(frame);
+    }
+}
+
+/// Replace decorative glyphs in the rendered buffer with plain ASCII. Text is
+/// left alone, so titles, artists and lyrics keep their characters.
+fn ascii_safe(frame: &mut Frame) {
+    for cell in frame.buffer_mut().content.iter_mut() {
+        if let Some(replacement) = ascii_glyph(cell.symbol()) {
+            cell.set_symbol(replacement);
+        }
+    }
+}
+
+fn ascii_glyph(symbol: &str) -> Option<&'static str> {
+    let first = symbol.chars().next()?;
+    if ('\u{2800}'..='\u{28ff}').contains(&first) {
+        return Some("#");
+    }
+    Some(match symbol {
+        "╭" | "╮" | "╰" | "╯" | "┌" | "┐" | "└" | "┘" | "╔" | "╗" | "╚" | "╝" | "├" | "┤" | "┬"
+        | "┴" | "┼" => "+",
+        "─" | "━" | "╌" | "╍" | "═" => "-",
+        "│" | "┃" | "╎" | "╏" | "║" => "|",
+        "▶" | "▸" | "►" => ">",
+        "◀" | "◂" | "◄" => "<",
+        "▲" => "^",
+        "▼" => "v",
+        "●" | "•" | "◉" | "⬤" => "*",
+        "○" | "◌" => "o",
+        "✓" | "✔" => "x",
+        "✗" | "✘" | "×" => "x",
+        "★" | "☆" | "✦" | "✧" => "*",
+        "≡" => "=",
+        "⌕" => "?",
+        "⤓" | "⬇" => "v",
+        "⚙" => "*",
+        "◷" | "⏱" => "o",
+        "♫" | "♪" | "♬" => "~",
+        "▤" => "=",
+        "▰" => "#",
+        "▱" | "▁" => "-",
+        "▏" => "'",
+        "▎" | "▍" | "▌" | "▋" | "▊" | "▉" | "█" | "▂" | "▃" | "▅" | "▆" | "▇" | "░" | "▒" | "▓" => {
+            "="
+        }
+        "▀" | "▄" => "#",
+        "⏸" => "||",
+        "⏭" => ">>",
+        "⏮" => "<<",
+        "…" => "...",
+        "·" => ".",
+        "—" | "–" => "-",
+        _ => return None,
+    })
+}
+
+/// Unit-testable mapping used by [`ascii_safe`].
+#[cfg(test)]
+mod ascii_tests {
+    use super::ascii_glyph;
+
+    #[test]
+    fn maps_decoration_but_not_text() {
+        assert_eq!(ascii_glyph("▶"), Some(">"));
+        assert_eq!(ascii_glyph("╭"), Some("+"));
+        assert_eq!(ascii_glyph("█"), Some("="));
+        assert_eq!(ascii_glyph("★"), Some("*"));
+        assert_eq!(ascii_glyph("A"), None);
+        assert_eq!(ascii_glyph("é"), None);
     }
 }
 

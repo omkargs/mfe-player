@@ -258,6 +258,8 @@ pub struct AppConfig {
     pub wallpaper: String,
     /// Shift the accent colours to the dominant colour of the current cover.
     pub ambient_art: bool,
+    /// Glyph set: nerd (default), ascii, or auto.
+    pub icons: String,
 }
 
 impl Default for AppConfig {
@@ -286,6 +288,7 @@ impl Default for AppConfig {
             transparent: true,
             wallpaper: String::new(),
             ambient_art: false,
+            icons: "nerd".to_string(),
         }
     }
 }
@@ -358,6 +361,9 @@ wallpaper = ""
 # Ambient tint: pull a vivid accent from the current album cover and let the
 # theme follow the music. Grey covers are ignored. Toggle with Alt+A.
 ambient_art = false
+
+# Glyphs: nerd (default), ascii (plain TTYs/screen readers), or auto.
+icons = "nerd"
 "#;
 
 pub fn load_config() -> (AppConfig, Option<String>) {

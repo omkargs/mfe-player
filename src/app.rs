@@ -3708,6 +3708,24 @@ impl App {
             });
     }
 
+    /// True when the UI should avoid Nerd Font / box-drawing glyphs.
+    pub fn ascii_icons(&self) -> bool {
+        if let Ok(value) = std::env::var("MFE_ICONS") {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "ascii" | "plain" | "off" => return true,
+                "nerd" | "unicode" => return false,
+                _ => {}
+            }
+        }
+        match self.config.icons.trim().to_ascii_lowercase().as_str() {
+            "ascii" | "plain" | "off" => true,
+            "auto" => std::env::var("TERM")
+                .map(|term| term == "linux" || term.is_empty())
+                .unwrap_or(true),
+            _ => false,
+        }
+    }
+
     /// What the tab/window title should say right now. Updated by the event
     /// loop when it changes, and restored on exit.
     pub fn terminal_title(&self) -> String {

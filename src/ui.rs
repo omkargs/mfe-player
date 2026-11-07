@@ -9,7 +9,9 @@ use crate::app::{
     palette_ranked, App, FilterKind, HitAction, Overlay, PaletteItem, View, PALETTE_ITEMS,
     SLEEP_OPTIONS,
 };
-use crate::models::{display_width, format_duration, format_position, truncate, Track};
+use crate::models::{
+    display_width, format_duration, format_position, parse_lyrics, truncate, Track,
+};
 use crate::plugins::PluginKind;
 use crate::theme;
 
@@ -37,6 +39,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .style(Style::default().fg(th().dim).bg(theme::bg())),
             area,
         );
+        if app.ascii_icons() {
+            ascii_safe(frame);
+        }
+        return;
+    }
+
+    if app.now_playing_fullscreen {
+        draw_now_playing(frame, app, area);
         if app.ascii_icons() {
             ascii_safe(frame);
         }
@@ -137,6 +147,253 @@ mod ascii_tests {
         assert_eq!(ascii_glyph("A"), None);
         assert_eq!(ascii_glyph("é"), None);
     }
+}
+
+/// The full-screen now-playing view: big cover on the left, track details and
+/// synced lyrics on the right. Everything is derived from state the app
+/// already keeps, so it stays correct while the track changes underneath it.
+fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(th().accent))
+        .title(Span::styled(
+            " now playing · Alt+V / Esc close ",
+            Style::default()
+                .fg(th().accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(theme::panel()));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let Some(track) = app.now_playing.clone() else {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "nothing playing",
+                    Style::default().fg(th().fg).add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    "press / to search, Enter to play",
+                    Style::default().fg(th().dim),
+                )),
+            ])
+            .alignment(Alignment::Center),
+            inner,
+        );
+        return;
+    };
+
+    let wide = inner.width >= 88 && inner.height >= 18;
+    let (art_area, info) = if wide {
+        let cols = Layout::horizontal([Constraint::Percentage(42), Constraint::Percentage(58)])
+            .split(inner);
+        (Some(cols[0]), cols[1])
+    } else {
+        (None, inner)
+    };
+
+    if let Some(art_area) = art_area {
+        match app.artwork.as_ref() {
+            Some(art) => draw_art(
+                frame,
+                art,
+                Rect {
+                    x: art_area.x + 1,
+                    y: art_area.y + 1,
+                    width: art_area.width.saturating_sub(2),
+                    height: art_area.height.saturating_sub(2),
+                },
+            ),
+            None => frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "cover art loads with the track",
+                        Style::default().fg(th().faint),
+                    )),
+                ])
+                .alignment(Alignment::Center),
+                art_area,
+            ),
+        }
+    }
+
+    let snapshot = app.audio_snapshot();
+    let rows = Layout::vertical([
+        Constraint::Length(if inner.height >= 20 { 2 } else { 1 }),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .split(info);
+
+    frame.render_widget(
+        Paragraph::new(track.title.clone())
+            .wrap(Wrap { trim: true })
+            .style(
+                Style::default()
+                    .fg(th().fg)
+                    .bg(theme::panel())
+                    .add_modifier(Modifier::BOLD),
+            ),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            track.artist.clone(),
+            Style::default().fg(th().accent2),
+        ))
+        .style(Style::default().bg(theme::panel())),
+        rows[1],
+    );
+    let mut meta = track.album.clone();
+    if let Some(year) = &track.year {
+        if !meta.is_empty() {
+            meta.push_str(" · ");
+        }
+        meta.push_str(year);
+    }
+    if !track.source.is_empty() {
+        if !meta.is_empty() {
+            meta.push_str(" · ");
+        }
+        meta.push_str(&track.source);
+    }
+    frame.render_widget(
+        Paragraph::new(meta)
+            .style(Style::default().fg(th().dim).bg(theme::panel()))
+            .wrap(Wrap { trim: true }),
+        rows[2],
+    );
+
+    let duration = snapshot
+        .duration
+        .max(track.duration.map(|seconds| seconds as f64).unwrap_or(0.0));
+    let ratio = if duration > 0.0 {
+        (snapshot.position / duration).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let label = if duration > 0.0 {
+        format!(
+            " {} / {} ",
+            format_position(snapshot.position),
+            format_position(duration)
+        )
+    } else {
+        format!(" {} / --:-- ", format_position(snapshot.position))
+    };
+    let bar_width = (rows[4].width as usize)
+        .saturating_sub(label.chars().count() + 1)
+        .max(1);
+    let mut bar = Line::from(bar_spans(bar_width, ratio));
+    bar.spans.push(Span::styled(
+        label,
+        Style::default().fg(th().dim).bg(theme::panel()),
+    ));
+    frame.render_widget(
+        Paragraph::new(bar).style(Style::default().bg(theme::panel())),
+        rows[4],
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            if snapshot.paused {
+                "paused · space to resume"
+            } else {
+                "playing · space to pause"
+            },
+            Style::default().fg(if snapshot.paused {
+                th().yellow
+            } else {
+                th().green
+            }),
+        ))
+        .style(Style::default().bg(theme::panel())),
+        rows[5],
+    );
+
+    // Lyrics: cached by the normal lyrics flow, fetched in the background when
+    // this view opens. The current synced line is highlighted.
+    let doc = app.lyrics_cache.get(&track.id);
+    let lines = doc.map(parse_lyrics).unwrap_or_default();
+    let source = doc
+        .map(|doc| doc.source.clone())
+        .unwrap_or_else(|| "fetching".to_string());
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            if lines.is_empty() {
+                format!(" lyrics · {source}")
+            } else {
+                format!(" lyrics · {source} · {} lines", lines.len())
+            },
+            Style::default().fg(th().faint),
+        ))
+        .style(Style::default().bg(theme::panel())),
+        rows[6],
+    );
+
+    if lines.is_empty() {
+        let message = if doc.is_some() {
+            "no lyrics for this track · press y for the lyrics popup"
+        } else {
+            "fetching lyrics in the background…"
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(message, Style::default().fg(th().dim))),
+            ])
+            .alignment(Alignment::Center)
+            .style(Style::default().bg(theme::panel())),
+            rows[7],
+        );
+        return;
+    }
+
+    let position = snapshot.position;
+    let current = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| line.at.map(|at| (index, at)))
+        .take_while(|(_, at)| *at <= position + 0.2)
+        .last()
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let height = rows[7].height.max(1) as usize;
+    let start = current
+        .saturating_sub(height / 2)
+        .min(lines.len().saturating_sub(height));
+    let visible: Vec<Line> = lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(height)
+        .map(|(index, line)| {
+            let style = if index == current {
+                Style::default()
+                    .fg(th().accent)
+                    .add_modifier(Modifier::BOLD)
+            } else if index < current {
+                Style::default().fg(th().faint)
+            } else {
+                Style::default().fg(th().dim)
+            };
+            Line::from(Span::styled(line.text.clone(), style))
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(visible)
+            .alignment(Alignment::Center)
+            .style(Style::default().bg(theme::panel())),
+        rows[7],
+    );
 }
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -2296,6 +2553,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("Alt+T", "cycle colour theme (wallpaper = sample the desktop)"),
         key("Alt+W", "transparent background (let the terminal show the wallpaper)"),
         key("Alt+A", "ambient tint (accent follows the current cover)"),
+        key("Alt+V", "full-screen now playing (big art + karaoke lyrics)"),
         key("Ctrl+P / :", "fzf command palette (every action)"),
         key("playerctl", "media keys control this player via MPRIS"),
         Line::from(""),

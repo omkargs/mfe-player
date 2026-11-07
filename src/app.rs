@@ -286,6 +286,7 @@ pub enum PaletteAction {
     ToggleMute,
     ToggleFavorite,
     ShowLyrics,
+    ShowNowPlaying,
     JumpToNowPlaying,
     PlayPage,
     FocusSearch,
@@ -409,6 +410,11 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         label: "Show lyrics",
         hint: "y",
         action: PaletteAction::ShowLyrics,
+    },
+    PaletteItem {
+        label: "Full-screen now playing",
+        hint: "Alt+V",
+        action: PaletteAction::ShowNowPlaying,
     },
     PaletteItem {
         label: "Jump to current track in queue",
@@ -725,6 +731,9 @@ pub struct App {
     download_pending: HashSet<String>,
     pub cava: Option<Cava>,
     pub cava_enabled: bool,
+    /// Full-screen now-playing view (Alt+V).
+    pub now_playing_fullscreen: bool,
+    lyrics_pending: HashSet<String>,
     pub sleep: SleepMode,
     pub eq: String,
     pub normalize: bool,
@@ -1005,6 +1014,8 @@ impl App {
             events_tx,
             events_rx,
             lyrics_cache: HashMap::new(),
+            now_playing_fullscreen: false,
+            lyrics_pending: HashSet::new(),
             artwork: None,
             artwork_track_id: None,
             artwork_url: None,
@@ -1120,10 +1131,18 @@ impl App {
         }
 
         self.update_lyrics_follow();
+        if self.now_playing_fullscreen {
+            self.ensure_lyrics();
+        }
         self.clamp_selections();
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if self.now_playing_fullscreen && key.code == KeyCode::Esc {
+            self.now_playing_fullscreen = false;
+            return;
+        }
+
         if self.overlay.is_some() {
             self.handle_overlay_key(key);
             return;
@@ -1279,6 +1298,9 @@ impl App {
             }
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.toggle_ambient_art()
+            }
+            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.now_playing_fullscreen = !self.now_playing_fullscreen;
             }
             KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.seek(-self.config.long_seek_step)
@@ -2083,6 +2105,7 @@ impl App {
             }
             AppEvent::LyricsDone { track_id, result } => match result {
                 Ok(doc) => {
+                    self.lyrics_pending.remove(&track_id);
                     self.lyrics_cache.insert(track_id.clone(), doc.clone());
                     if let Some(Overlay::Lyrics(lyrics)) = self.overlay.as_mut() {
                         if lyrics.track.id == track_id {
@@ -2095,6 +2118,7 @@ impl App {
                     }
                 }
                 Err(err) => {
+                    self.lyrics_pending.remove(&track_id);
                     if let Some(Overlay::Lyrics(lyrics)) = self.overlay.as_mut() {
                         if lyrics.track.id == track_id {
                             lyrics.loading = false;
@@ -5101,6 +5125,9 @@ impl App {
             PaletteAction::ToggleMute => self.toggle_mute(),
             PaletteAction::ToggleFavorite => self.toggle_favorite(),
             PaletteAction::ShowLyrics => self.open_lyrics(),
+            PaletteAction::ShowNowPlaying => {
+                self.now_playing_fullscreen = true;
+            }
             PaletteAction::JumpToNowPlaying => {
                 self.switch_view(View::Queue);
                 self.jump_to_now_playing();
@@ -5196,6 +5223,40 @@ impl App {
             PaletteAction::Help => self.overlay = Some(Overlay::Help),
             PaletteAction::Quit => self.should_quit = true,
         }
+    }
+
+    /// Fetch lyrics for the fullscreen view without opening the lyrics popup.
+    /// Cached tracks return immediately and in-flight requests are not
+    /// duplicated.
+    fn ensure_lyrics(&mut self) {
+        let Some(track) = self.now_playing.clone() else {
+            return;
+        };
+        if self.lyrics_cache.contains_key(&track.id) || self.lyrics_pending.contains(&track.id) {
+            return;
+        }
+        let Some(plugin) = self
+            .plugins
+            .active(PluginKind::Lyrics, self.active_lyrics.as_deref())
+        else {
+            return;
+        };
+        self.lyrics_pending.insert(track.id.clone());
+        let tx = self.events_tx.clone();
+        thread::spawn(move || {
+            let track_json = serde_json::to_string(&track).unwrap_or_else(|_| "{}".to_string());
+            let args = vec!["fetch".to_string(), track_json];
+            let result = run_plugin(&plugin, &args, Duration::from_secs(35))
+                .and_then(|raw| {
+                    serde_json::from_str::<LyricsDoc>(&raw)
+                        .map_err(|err| anyhow::anyhow!("invalid plugin JSON: {err}"))
+                })
+                .map_err(|err| err.to_string());
+            let _ = tx.send(AppEvent::LyricsDone {
+                track_id: track.id,
+                result,
+            });
+        });
     }
 
     fn open_lyrics(&mut self) {

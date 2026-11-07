@@ -241,6 +241,25 @@ pub fn bg() -> Color {
     }
 }
 
+/// Panel background. With transparency on this is also reset to the terminal,
+/// so the wallpaper shows through the lists instead of only through the gaps.
+pub fn panel() -> Color {
+    if transparent() {
+        Color::Reset
+    } else {
+        get().panel
+    }
+}
+
+/// Secondary panel background (player bar, search field, hero cards).
+pub fn panel2() -> Color {
+    if transparent() {
+        Color::Reset
+    } else {
+        get().panel2
+    }
+}
+
 pub const THEME_NAMES: &[&str] = &[
     "mfe",
     "gruvbox",
@@ -346,4 +365,23 @@ pub fn adopt_wallpaper(explicit: Option<&str>) -> anyhow::Result<String> {
         *current = theme;
     }
     Ok(path.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transparency_resets_every_background_layer() {
+        set_transparent(true);
+        assert_eq!(bg(), Color::Reset);
+        assert_eq!(panel(), Color::Reset);
+        assert_eq!(panel2(), Color::Reset);
+
+        set_transparent(false);
+        let theme = get();
+        assert_eq!(bg(), theme.bg);
+        assert_eq!(panel(), theme.panel);
+        assert_eq!(panel2(), theme.panel2);
+    }
 }

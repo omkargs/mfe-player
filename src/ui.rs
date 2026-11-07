@@ -180,7 +180,7 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
         .title(Span::styled(" library ", Style::default().fg(th().dim)))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -254,7 +254,7 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
     )));
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: true }),
         rows[0],
     );
@@ -288,7 +288,7 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
     ];
     let controls_row = if cava_left { rows[2] } else { rows[1] };
     frame.render_widget(
-        Paragraph::new(low).style(Style::default().bg(th().panel)),
+        Paragraph::new(low).style(Style::default().bg(theme::panel())),
         controls_row,
     );
     if cava_left {
@@ -308,7 +308,7 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
             " ♪ spectrum ",
             Style::default().fg(th().accent2),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -322,7 +322,7 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
                 " visualiser off ",
                 Style::default().fg(th().faint),
             ))])
-            .style(Style::default().bg(th().panel)),
+            .style(Style::default().bg(theme::panel())),
             inner,
         );
         return;
@@ -343,7 +343,7 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(th().faint),
                 )),
             ])
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: true }),
             inner,
         );
@@ -362,7 +362,7 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(th().faint),
                 )),
             ])
-            .style(Style::default().bg(th().panel)),
+            .style(Style::default().bg(theme::panel())),
             inner,
         );
         return;
@@ -375,7 +375,7 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
                 " waiting for audio… ",
                 Style::default().fg(th().faint),
             ))
-            .style(Style::default().bg(th().panel)),
+            .style(Style::default().bg(theme::panel())),
             inner,
         );
         return;
@@ -412,7 +412,7 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(spans));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel())),
         inner,
     );
 }
@@ -478,7 +478,7 @@ fn draw_main(frame: &mut Frame, app: &mut App, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
         .title(Span::styled(title, Style::default().fg(th().dim)))
-        .style(Style::default().bg(th().panel2));
+        .style(Style::default().bg(theme::panel2()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -509,7 +509,7 @@ fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
             "─".repeat(rows[1].width as usize),
             Style::default().fg(th().border),
         )))
-        .style(Style::default().bg(th().panel2)),
+        .style(Style::default().bg(theme::panel2())),
         rows[1],
     );
 
@@ -526,7 +526,7 @@ fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(th().dim),
                 )),
             ])
-            .style(Style::default().bg(th().panel2))
+            .style(Style::default().bg(theme::panel2()))
             .wrap(Wrap { trim: true }),
             rows[2],
         );
@@ -549,7 +549,7 @@ fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(th().dim),
                 )),
             ])
-            .style(Style::default().bg(th().panel2)),
+            .style(Style::default().bg(theme::panel2())),
             rows[2],
         );
         return;
@@ -620,7 +620,7 @@ fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         frame.render_widget(
             Paragraph::new(helper)
-                .style(Style::default().bg(th().panel2))
+                .style(Style::default().bg(theme::panel2()))
                 .wrap(Wrap { trim: true }),
             rows[2],
         );
@@ -689,7 +689,7 @@ fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(th().panel2))
+            .style(Style::default().bg(theme::panel2()))
             .scroll((offset, 0)),
         rows[2],
     );
@@ -802,7 +802,7 @@ fn draw_browse(frame: &mut Frame, app: &mut App, area: Rect) {
                 "  nothing to browse",
                 Style::default().fg(th().dim),
             ))
-            .style(Style::default().bg(th().panel2)),
+            .style(Style::default().bg(theme::panel2())),
             area,
         );
         return;
@@ -841,7 +841,7 @@ fn draw_browse(frame: &mut Frame, app: &mut App, area: Rect) {
         )),
     ];
     frame.render_widget(
-        Paragraph::new(hero).style(Style::default().bg(th().panel2)),
+        Paragraph::new(hero).style(Style::default().bg(theme::panel2())),
         rows[0],
     );
 
@@ -858,7 +858,7 @@ fn draw_browse(frame: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(th().dim),
                 )),
             ])
-            .style(Style::default().bg(th().panel2)),
+            .style(Style::default().bg(theme::panel2())),
             rows[1],
         );
         return;
@@ -877,7 +877,7 @@ fn draw_browse(frame: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(th().dim),
                 )),
             ])
-            .style(Style::default().bg(th().panel2)),
+            .style(Style::default().bg(theme::panel2())),
             rows[1],
         );
         return;
@@ -934,7 +934,7 @@ fn draw_browse(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(th().panel2))
+            .style(Style::default().bg(theme::panel2()))
             .scroll((offset, 0)),
         rows[1],
     );
@@ -955,7 +955,7 @@ fn draw_search_bar(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -995,7 +995,7 @@ fn draw_search_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(hint, Style::default().fg(th().faint)),
     ]);
     frame.render_widget(
-        Paragraph::new(line).style(Style::default().bg(th().panel)),
+        Paragraph::new(line).style(Style::default().bg(theme::panel())),
         inner,
     );
 }
@@ -1024,7 +1024,7 @@ fn draw_queue(frame: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(" skip", Style::default().fg(th().dim)),
     ]);
     frame.render_widget(
-        Paragraph::new(hint).style(Style::default().bg(th().panel2)),
+        Paragraph::new(hint).style(Style::default().bg(theme::panel2())),
         inner[0],
     );
     let hits = render_track_list(
@@ -1134,7 +1134,7 @@ fn draw_playlists(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled("d", Style::default().fg(th().accent2)),
             Span::styled(" delete", Style::default().fg(th().dim)),
         ]))
-        .style(Style::default().bg(th().panel2)),
+        .style(Style::default().bg(theme::panel2())),
         rows[0],
     );
     render_playlist_list(frame, app, rows[1]);
@@ -1180,7 +1180,7 @@ fn render_playlist_list(frame: &mut Frame, app: &mut App, area: Rect) {
         ]));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel2)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel2())),
         area,
     );
     app.record_hits(area, 0, hits);
@@ -1300,7 +1300,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
                 .fg(th().accent)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -1374,7 +1374,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(th().faint),
     )));
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel())),
         inner,
     );
 }
@@ -1449,7 +1449,7 @@ fn draw_plugins(frame: &mut Frame, app: &mut App, area: Rect) {
         ]));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel2)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel2())),
         area,
     );
     app.record_hits(area, 0, hits);
@@ -1461,7 +1461,7 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
         .title(Span::styled(" inspect ", Style::default().fg(th().dim)))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -1517,7 +1517,7 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
             ];
             frame.render_widget(
                 Paragraph::new(lines)
-                    .style(Style::default().bg(th().panel))
+                    .style(Style::default().bg(theme::panel()))
                     .wrap(Wrap { trim: true }),
                 inner,
             );
@@ -1559,7 +1559,7 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(th().dim),
                 )),
             ])
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: true }),
             body,
         );
@@ -1679,7 +1679,7 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
     }
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: true }),
         body,
     );
@@ -1711,7 +1711,7 @@ fn draw_art(frame: &mut Frame, art: &crate::artwork::Artwork, area: Rect) {
         lines.push(Line::from(spans));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel())),
         Rect {
             x: x_off,
             y: area.y,
@@ -1734,7 +1734,7 @@ fn draw_eq(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
                 .fg(th().accent)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -1778,7 +1778,7 @@ fn draw_eq(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
         Style::default().fg(th().accent2),
     )));
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel())),
         inner,
     );
 }
@@ -1874,7 +1874,7 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
                 }),
             ),
         ]))
-        .style(Style::default().bg(th().panel2));
+        .style(Style::default().bg(theme::panel2()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -1909,7 +1909,7 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
         ),
     ]);
     frame.render_widget(
-        Paragraph::new(line).style(Style::default().bg(th().panel2)),
+        Paragraph::new(line).style(Style::default().bg(theme::panel2())),
         rows[0],
     );
 
@@ -1942,10 +1942,10 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut progress = Line::from(bar_spans(bar_width, ratio));
     progress.spans.push(Span::styled(
         time_label,
-        Style::default().fg(th().dim).bg(th().panel),
+        Style::default().fg(th().dim).bg(theme::panel()),
     ));
     frame.render_widget(
-        Paragraph::new(progress).style(Style::default().bg(th().panel)),
+        Paragraph::new(progress).style(Style::default().bg(theme::panel())),
         gauge_area[0],
     );
     app.record_hits(gauge_area[0], 0, vec![(0, HitAction::SeekBar)]);
@@ -1988,7 +1988,7 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
             }),
         )))
         .alignment(Alignment::Right)
-        .style(Style::default().bg(th().panel2)),
+        .style(Style::default().bg(theme::panel2())),
         gauge_area[1],
     );
 }
@@ -2103,7 +2103,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
                 .fg(th().accent)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -2202,13 +2202,13 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     ];
     frame.render_widget(
         Paragraph::new(left)
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: true }),
         columns[0],
     );
     frame.render_widget(
         Paragraph::new(right)
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: true }),
         columns[1],
     );
@@ -2243,7 +2243,7 @@ fn draw_palette(frame: &mut Frame, query: &str, selected: usize, area: Rect) {
                 .fg(th().accent)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -2259,7 +2259,7 @@ fn draw_palette(frame: &mut Frame, query: &str, selected: usize, area: Rect) {
             Span::styled(query.to_string(), Style::default().fg(th().fg)),
             Span::styled("▌", Style::default().fg(th().accent)),
         ]))
-        .style(Style::default().bg(th().panel2)),
+        .style(Style::default().bg(theme::panel2())),
         rows[0],
     );
     frame.render_widget(
@@ -2278,7 +2278,7 @@ fn draw_palette(frame: &mut Frame, query: &str, selected: usize, area: Rect) {
         rows[2].height as usize,
     );
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel())),
         rows[2],
     );
 }
@@ -2357,7 +2357,7 @@ fn draw_filter(
                 .fg(th().accent2)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -2373,7 +2373,7 @@ fn draw_filter(
             Span::styled(query.to_string(), Style::default().fg(th().fg)),
             Span::styled("▌", Style::default().fg(th().accent2)),
         ]))
-        .style(Style::default().bg(th().panel2)),
+        .style(Style::default().bg(theme::panel2())),
         rows[0],
     );
     frame.render_widget(
@@ -2409,7 +2409,7 @@ fn draw_filter(
         ));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel())),
         rows[2],
     );
 }
@@ -2428,7 +2428,7 @@ fn draw_playlist_picker(frame: &mut Frame, app: &App, selected: usize, area: Rec
                 .fg(th().purple)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -2456,7 +2456,7 @@ fn draw_playlist_picker(frame: &mut Frame, app: &App, selected: usize, area: Rec
     }
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: true }),
         inner,
     );
@@ -2475,7 +2475,7 @@ fn draw_new_playlist(frame: &mut Frame, name: &str, area: Rect) {
                 .fg(th().purple)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -2498,7 +2498,7 @@ fn draw_new_playlist(frame: &mut Frame, name: &str, area: Rect) {
         ]),
     ];
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel())),
         inner,
     );
 }
@@ -2516,7 +2516,7 @@ fn draw_rename_playlist(frame: &mut Frame, name: &str, area: Rect) {
                 .fg(th().purple)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -2539,7 +2539,7 @@ fn draw_rename_playlist(frame: &mut Frame, name: &str, area: Rect) {
         ]),
     ];
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel())),
         inner,
     );
 }
@@ -2557,7 +2557,7 @@ fn draw_import_link(frame: &mut Frame, input: &str, area: Rect) {
                 .fg(th().accent2)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -2583,7 +2583,7 @@ fn draw_import_link(frame: &mut Frame, input: &str, area: Rect) {
             Span::styled(
                 format!("{shown}▌"),
                 Style::default()
-                    .bg(th().panel2)
+                    .bg(theme::panel2())
                     .fg(th().fg)
                     .add_modifier(Modifier::BOLD),
             ),
@@ -2600,7 +2600,7 @@ fn draw_import_link(frame: &mut Frame, input: &str, area: Rect) {
     ];
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: false }),
         inner,
     );
@@ -2619,7 +2619,7 @@ fn draw_sleep(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
                 .fg(th().accent2)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -2653,7 +2653,7 @@ fn draw_sleep(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
         Span::styled(" cancel", Style::default().fg(th().dim)),
     ]));
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel())),
         inner,
     );
 }
@@ -2669,7 +2669,7 @@ fn draw_confirm(frame: &mut Frame, message: &str, area: Rect) {
             " confirm ",
             Style::default().fg(th().red).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
     let lines = vec![
@@ -2687,7 +2687,7 @@ fn draw_confirm(frame: &mut Frame, message: &str, area: Rect) {
     ];
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: true }),
         inner,
     );
@@ -2723,7 +2723,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect) {
                 .fg(th().purple)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(th().panel));
+        .style(Style::default().bg(theme::panel()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -2743,7 +2743,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(th().dim),
                 )),
             ])
-            .style(Style::default().bg(th().panel)),
+            .style(Style::default().bg(theme::panel())),
             inner,
         );
         return;
@@ -2763,7 +2763,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(th().dim),
                 )),
             ])
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: true }),
             inner,
         );
@@ -2779,7 +2779,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(th().dim),
                 )),
             ])
-            .style(Style::default().bg(th().panel)),
+            .style(Style::default().bg(theme::panel())),
             inner,
         );
         return;
@@ -2830,7 +2830,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect) {
     }
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(th().panel))
+            .style(Style::default().bg(theme::panel()))
             .wrap(Wrap { trim: false }),
         inner,
     );
@@ -2866,7 +2866,7 @@ fn render_track_list(
         ));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(th().panel2)),
+        Paragraph::new(lines).style(Style::default().bg(theme::panel2())),
         area,
     );
     hits
@@ -2959,7 +2959,7 @@ fn draw_empty(frame: &mut Frame, area: Rect, title: &str, hint: &str) {
     ];
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().bg(th().panel2))
+            .style(Style::default().bg(theme::panel2()))
             .wrap(Wrap { trim: true }),
         area,
     );

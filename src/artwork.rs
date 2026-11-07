@@ -23,6 +23,11 @@ pub struct Artwork {
 }
 
 impl Artwork {
+    /// The cover's identity colour, used by the opt-in ambient tint.
+    pub fn dominant(&self) -> Option<[u8; 3]> {
+        crate::wallpaper::dominant_from_pixels(&self.pixels)
+    }
+
     pub fn pixel(&self, x: usize, y: usize) -> [u8; 3] {
         let x = x.min(self.width.saturating_sub(1));
         let y = y.min(self.height.saturating_sub(1));

@@ -78,12 +78,21 @@ pub fn palette_from_rgb(image: &RgbImage) -> Theme {
 }
 
 fn dominant_colour(image: &RgbImage) -> [u8; 3] {
+    let pixels: Vec<[u8; 3]> = image.pixels().map(|pixel| pixel.0).collect();
+    dominant_from_pixels(&pixels).unwrap_or([0, 0, 0])
+}
+
+/// Pick the most "identity" colour out of a list of RGB pixels: the bucket
+/// that covers a lot of the image, is saturated enough to be a colour, and is
+/// neither pure black nor pure white. Shared by the wallpaper palette and the
+/// album-art ambient tint.
+pub fn dominant_from_pixels(pixels: &[[u8; 3]]) -> Option<[u8; 3]> {
     // Quantise to 4 bits per channel and score buckets by how much of the
     // image they cover, how saturated they are, and whether they are mid-tone
-    // (pure black/white corners are usually not the wallpaper's identity).
+    // (pure black/white corners are usually not the image's identity).
     let mut buckets: HashMap<u16, (u32, f32, f32, f32)> = HashMap::new();
-    for pixel in image.pixels() {
-        let [r, g, b] = pixel.0;
+    for pixel in pixels {
+        let [r, g, b] = *pixel;
         let key = (((r >> 4) as u16) << 8) | (((g >> 4) as u16) << 4) | ((b >> 4) as u16);
         let entry = buckets.entry(key).or_insert((0, 0.0, 0.0, 0.0));
         entry.0 += 1;
@@ -109,23 +118,35 @@ fn dominant_colour(image: &RgbImage) -> [u8; 3] {
     }
 
     if best.0 > 0.0 {
-        best.1
-    } else {
-        let mut total = [0u64; 3];
-        let mut pixels = 0u64;
-        for pixel in image.pixels() {
-            for (index, channel) in pixel.0.iter().enumerate() {
-                total[index] += *channel as u64;
-            }
-            pixels += 1;
-        }
-        let pixels = pixels.max(1);
-        [
-            (total[0] / pixels) as u8,
-            (total[1] / pixels) as u8,
-            (total[2] / pixels) as u8,
-        ]
+        return Some(best.1);
     }
+    if pixels.is_empty() {
+        return None;
+    }
+    let mut total = [0u64; 3];
+    for pixel in pixels {
+        for (index, channel) in pixel.iter().enumerate() {
+            total[index] += *channel as u64;
+        }
+    }
+    let count = pixels.len() as u64;
+    Some([
+        (total[0] / count) as u8,
+        (total[1] / count) as u8,
+        (total[2] / count) as u8,
+    ])
+}
+
+/// Turn a dominant colour into a vivid accent pair, or `None` when the colour
+/// is basically grey (a black-and-white cover should not tint the whole UI).
+pub fn accent_pair(rgb: [u8; 3]) -> Option<(Color, Color)> {
+    let (hue, saturation, _) = rgb_to_hsl(rgb[0], rgb[1], rgb[2]);
+    if saturation < 0.10 {
+        return None;
+    }
+    let accent = hsl(hue, saturation.clamp(0.55, 0.95), 0.64);
+    let accent2 = hsl((hue + 0.5) % 1.0, 0.72, 0.66);
+    Some((accent, accent2))
 }
 
 fn hsl(h: f32, s: f32, l: f32) -> Color {
@@ -348,6 +369,22 @@ mod tests {
             *pixel = Rgb(colour);
         }
         image
+    }
+
+    #[test]
+    fn dominant_from_pixels_ignores_black_borders() {
+        let mut pixels = vec![[0, 0, 0]; 400];
+        pixels.extend(vec![[220, 40, 60]; 100]);
+        let dominant = dominant_from_pixels(&pixels).unwrap();
+        assert_eq!(dominant, [220, 40, 60]);
+    }
+
+    #[test]
+    fn accent_pair_is_vivid_and_ignores_grey() {
+        let (accent, accent2) = accent_pair([220, 40, 60]).unwrap();
+        assert!(matches!(accent, Color::Rgb(..)));
+        assert_ne!(accent, accent2);
+        assert!(accent_pair([128, 128, 128]).is_none());
     }
 
     #[test]

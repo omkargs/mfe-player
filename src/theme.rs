@@ -218,6 +218,10 @@ const OCEAN: Theme = Theme {
 
 static CURRENT: RwLock<Theme> = RwLock::new(MFE);
 
+/// The accent pair to restore when the ambient tint is disabled or a cover
+/// has no usable colour. Only set while an ambient tint is active.
+static AMBIENT_BASE: RwLock<Option<(Color, Color)>> = RwLock::new(None);
+
 /// When enabled, the app stops painting the base background so the terminal's
 /// own transparency (and therefore the wallpaper) shows through. Panels still
 /// use `theme.panel`, so text stays readable.
@@ -304,11 +308,42 @@ pub fn set_theme(name: &str) -> bool {
     if let Ok(mut current) = CURRENT.write() {
         *current = theme;
     }
+    if let Ok(mut base) = AMBIENT_BASE.write() {
+        *base = None;
+    }
     true
 }
 
 pub fn get() -> Theme {
     CURRENT.read().map(|theme| *theme).unwrap_or(MFE)
+}
+
+/// Shift the accent colours to the dominant colour of the current cover.
+///
+/// `None` (or a grey cover) restores the exact accent pair the theme had
+/// before the tint started, so the theme itself is never mutated.
+pub fn apply_ambient(rgb: Option<[u8; 3]>) {
+    let Ok(mut current) = CURRENT.write() else {
+        return;
+    };
+    let Ok(mut saved) = AMBIENT_BASE.write() else {
+        return;
+    };
+    match rgb.and_then(wallpaper::accent_pair) {
+        Some((accent, accent2)) => {
+            if saved.is_none() {
+                *saved = Some((current.accent, current.accent2));
+            }
+            current.accent = accent;
+            current.accent2 = accent2;
+        }
+        None => {
+            if let Some((accent, accent2)) = saved.take() {
+                current.accent = accent;
+                current.accent2 = accent2;
+            }
+        }
+    }
 }
 
 /// Map old aliases (including the pre-rename `nuclear` theme) onto the
@@ -364,6 +399,9 @@ pub fn adopt_wallpaper(explicit: Option<&str>) -> anyhow::Result<String> {
     if let Ok(mut current) = CURRENT.write() {
         *current = theme;
     }
+    if let Ok(mut base) = AMBIENT_BASE.write() {
+        *base = None;
+    }
     Ok(path.display().to_string())
 }
 
@@ -383,5 +421,22 @@ mod tests {
         assert_eq!(bg(), theme.bg);
         assert_eq!(panel(), theme.panel);
         assert_eq!(panel2(), theme.panel2);
+    }
+
+    #[test]
+    fn ambient_tint_restores_the_original_accents() {
+        set_theme("mfe");
+        let base = get();
+
+        apply_ambient(Some([220, 40, 60]));
+        assert_ne!(get().accent, base.accent);
+
+        apply_ambient(None);
+        assert_eq!(get().accent, base.accent);
+        assert_eq!(get().accent2, base.accent2);
+
+        // A grey cover leaves the theme alone instead of washing it out.
+        apply_ambient(Some([128, 128, 128]));
+        assert_eq!(get().accent, base.accent);
     }
 }

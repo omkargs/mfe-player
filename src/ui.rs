@@ -2180,6 +2180,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("inspector", "album art loads automatically for the playing track"),
         key("Alt+T", "cycle colour theme (wallpaper = sample the desktop)"),
         key("Alt+W", "transparent background (let the terminal show the wallpaper)"),
+        key("Alt+A", "ambient tint (accent follows the current cover)"),
         key("Ctrl+P / :", "fzf command palette (every action)"),
         key("playerctl", "media keys control this player via MPRIS"),
         Line::from(""),

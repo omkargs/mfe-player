@@ -324,6 +324,7 @@ pub enum PaletteAction {
     OpenEq,
     CycleTheme,
     ToggleTransparency,
+    ToggleAmbientArt,
     AdoptWallpaper,
     ToggleCava,
     Background,
@@ -593,6 +594,11 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         label: "Toggle transparent background",
         hint: "Alt+W",
         action: PaletteAction::ToggleTransparency,
+    },
+    PaletteItem {
+        label: "Toggle album-art ambient tint",
+        hint: "Alt+A",
+        action: PaletteAction::ToggleAmbientArt,
     },
     PaletteItem {
         label: "Adopt wallpaper colours",
@@ -1270,6 +1276,9 @@ impl App {
             KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::ALT) => self.cycle_theme(),
             KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.toggle_transparency()
+            }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.toggle_ambient_art()
             }
             KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.seek(-self.config.long_seek_step)
@@ -2038,14 +2047,19 @@ impl App {
                 if self.now_playing.as_ref().map(|t| t.id.as_str()) == Some(track_id.as_str()) {
                     match result {
                         Ok(art) => {
+                            let ambient = art.dominant();
                             self.artwork = Some(art);
                             self.artwork_track_id = Some(track_id);
+                            if self.config.ambient_art {
+                                theme::apply_ambient(ambient);
+                            }
                         }
                         Err(_) => {
                             // Broken cover link is not worth a toast; the
                             // inspector simply keeps its text layout.
                             self.artwork = None;
                             self.artwork_track_id = None;
+                            theme::apply_ambient(None);
                         }
                     }
                 }
@@ -3202,6 +3216,9 @@ impl App {
         theme::set_theme(name);
         self.theme_name = name.to_string();
         config::set_theme_in_file(name);
+        if self.config.ambient_art {
+            theme::apply_ambient(self.artwork.as_ref().and_then(|art| art.dominant()));
+        }
         self.flash(format!("theme: {name}"));
     }
 
@@ -3221,6 +3238,25 @@ impl App {
         } else {
             "background solid"
         });
+    }
+
+    fn toggle_ambient_art(&mut self) {
+        self.config.ambient_art = !self.config.ambient_art;
+        config::set_line(
+            "ambient_art",
+            if self.config.ambient_art {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        if self.config.ambient_art {
+            theme::apply_ambient(self.artwork.as_ref().and_then(|art| art.dominant()));
+            self.flash("ambient tint on · accent follows the cover");
+        } else {
+            theme::apply_ambient(None);
+            self.flash("ambient tint off · theme accent restored");
+        }
     }
 
     fn toggle_cava(&mut self) {
@@ -3674,11 +3710,16 @@ impl App {
 
     fn request_artwork(&mut self, track: &Track) {
         let Some(url) = track.artwork.clone().filter(|url| !url.trim().is_empty()) else {
+            self.artwork = None;
+            self.artwork_url = None;
+            self.artwork_track_id = None;
+            theme::apply_ambient(None);
             return;
         };
         if self.artwork_url.as_deref() == Some(url.as_str()) {
             return;
         }
+        theme::apply_ambient(None);
         self.artwork_url = Some(url.clone());
         let track_id = track.id.clone();
         let tx = self.events_tx.clone();
@@ -5103,6 +5144,7 @@ impl App {
             PaletteAction::OpenEq => self.overlay = Some(Overlay::Eq { selected: 0 }),
             PaletteAction::CycleTheme => self.cycle_theme(),
             PaletteAction::ToggleTransparency => self.toggle_transparency(),
+            PaletteAction::ToggleAmbientArt => self.toggle_ambient_art(),
             PaletteAction::AdoptWallpaper => {
                 match theme::adopt_wallpaper(Some(&self.config.wallpaper)) {
                     Ok(path) => {

@@ -256,6 +256,8 @@ pub struct AppConfig {
     pub transparent: bool,
     /// Explicit wallpaper for `theme = "wallpaper"`. Empty = ask the desktop.
     pub wallpaper: String,
+    /// Shift the accent colours to the dominant colour of the current cover.
+    pub ambient_art: bool,
 }
 
 impl Default for AppConfig {
@@ -283,6 +285,7 @@ impl Default for AppConfig {
             replaygain: "off".to_string(),
             transparent: false,
             wallpaper: String::new(),
+            ambient_art: false,
         }
     }
 }
@@ -350,6 +353,10 @@ transparent = false
 # Optional explicit wallpaper for theme = "wallpaper". Empty means "ask the
 # compositor" (swww, hyprpaper, GNOME, Plasma, macOS, Windows).
 wallpaper = ""
+
+# Ambient tint: pull a vivid accent from the current album cover and let the
+# theme follow the music. Grey covers are ignored. Toggle with Alt+A.
+ambient_art = false
 "#;
 
 pub fn load_config() -> (AppConfig, Option<String>) {

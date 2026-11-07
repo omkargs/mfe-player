@@ -25,7 +25,7 @@ use anyhow::Result;
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -360,9 +360,16 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse: bo
 }
 
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) -> Result<()> {
+    let mut title = String::new();
     while !app.should_quit {
         app.tick();
         terminal.draw(|frame| ui::draw(frame, app))?;
+
+        let wanted = app.terminal_title();
+        if wanted != title {
+            execute!(terminal.backend_mut(), SetTitle(&wanted))?;
+            title = wanted;
+        }
 
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
@@ -377,5 +384,6 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) ->
             }
         }
     }
+    let _ = execute!(terminal.backend_mut(), SetTitle("mfe-player"));
     Ok(())
 }

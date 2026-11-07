@@ -3708,6 +3708,23 @@ impl App {
             });
     }
 
+    /// What the tab/window title should say right now. Updated by the event
+    /// loop when it changes, and restored on exit.
+    pub fn terminal_title(&self) -> String {
+        match &self.now_playing {
+            Some(track) => {
+                let paused = self.audio_snapshot().paused;
+                format!(
+                    "{} {} — {}",
+                    if paused { "❚❚" } else { "▶" },
+                    track.title,
+                    track.artist
+                )
+            }
+            None => "mfe · music for everyone".to_string(),
+        }
+    }
+
     fn request_artwork(&mut self, track: &Track) {
         let Some(url) = track.artwork.clone().filter(|url| !url.trim().is_empty()) else {
             self.artwork = None;

@@ -326,6 +326,7 @@ pub enum PaletteAction {
     CycleTheme,
     ToggleTransparency,
     ToggleAmbientArt,
+    ToggleNotifications,
     AdoptWallpaper,
     ToggleCava,
     Background,
@@ -605,6 +606,11 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         label: "Toggle album-art ambient tint",
         hint: "Alt+A",
         action: PaletteAction::ToggleAmbientArt,
+    },
+    PaletteItem {
+        label: "Toggle desktop notifications",
+        hint: "config",
+        action: PaletteAction::ToggleNotifications,
     },
     PaletteItem {
         label: "Adopt wallpaper colours",
@@ -3283,6 +3289,29 @@ impl App {
         }
     }
 
+    fn announce(&self, track: &Track) {
+        if self.config.notifications {
+            crate::notify::now_playing(track);
+        }
+    }
+
+    fn toggle_notifications(&mut self) {
+        self.config.notifications = !self.config.notifications;
+        config::set_line(
+            "notifications",
+            if self.config.notifications {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        self.flash(if self.config.notifications {
+            "desktop notifications on"
+        } else {
+            "desktop notifications off"
+        });
+    }
+
     fn toggle_cava(&mut self) {
         if self.cava.is_some() {
             self.cava = None;
@@ -3654,6 +3683,7 @@ impl App {
         self.queue_selected = index;
         self.now_index = Some(index);
         self.now_playing = Some(self.queue[index].clone());
+        self.announce(&self.queue[index]);
         self.pending_seek = None;
         self.resume_at = None;
         self.resume_track_id = None;
@@ -3686,6 +3716,7 @@ impl App {
         self.queue_selected = index;
         self.now_index = Some(index);
         self.now_playing = Some(track.clone());
+        self.announce(&track);
         self.pending_seek = None;
         self.resume_at = None;
         self.resume_track_id = None;
@@ -3704,6 +3735,7 @@ impl App {
         self.now_index = Some(index);
         self.queue_selected = index;
         self.now_playing = Some(track.clone());
+        self.announce(&track);
         self.pending_seek = start_at;
         self.mark_dirty();
         self.start_stream(track);
@@ -5207,6 +5239,7 @@ impl App {
             PaletteAction::CycleTheme => self.cycle_theme(),
             PaletteAction::ToggleTransparency => self.toggle_transparency(),
             PaletteAction::ToggleAmbientArt => self.toggle_ambient_art(),
+            PaletteAction::ToggleNotifications => self.toggle_notifications(),
             PaletteAction::AdoptWallpaper => {
                 match theme::adopt_wallpaper(Some(&self.config.wallpaper)) {
                     Ok(path) => {

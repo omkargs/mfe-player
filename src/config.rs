@@ -260,6 +260,8 @@ pub struct AppConfig {
     pub ambient_art: bool,
     /// Glyph set: nerd (default), ascii, or auto.
     pub icons: String,
+    /// Desktop notification on track change.
+    pub notifications: bool,
 }
 
 impl Default for AppConfig {
@@ -289,6 +291,7 @@ impl Default for AppConfig {
             wallpaper: String::new(),
             ambient_art: false,
             icons: "nerd".to_string(),
+            notifications: false,
         }
     }
 }
@@ -364,6 +367,9 @@ ambient_art = false
 
 # Glyphs: nerd (default), ascii (plain TTYs/screen readers), or auto.
 icons = "nerd"
+
+# Desktop notification when a new track starts (Linux, macOS, Windows).
+notifications = false
 "#;
 
 pub fn load_config() -> (AppConfig, Option<String>) {

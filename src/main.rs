@@ -9,6 +9,7 @@ mod ipc;
 mod library;
 mod models;
 mod mpris;
+mod notify;
 mod plugins;
 mod social;
 mod state;

@@ -21,17 +21,18 @@
   },
   "files": [
     "bin/mfe.js",
+    "install.sh",
     "README.md"
   ],
   "engines": {
     "node": ">=16"
   },
   "optionalDependencies": {
-    "mfe-player-linux-x64": "0.2.1",
-    "mfe-player-linux-x64-musl": "0.2.1",
-    "mfe-player-linux-arm64": "0.2.1",
-    "mfe-player-darwin-x64": "0.2.1",
-    "mfe-player-darwin-arm64": "0.2.1",
-    "mfe-player-win32-x64": "0.2.1"
+    "mfe-player-linux-x64": "0.2.0",
+    "mfe-player-linux-x64-musl": "0.2.0",
+    "mfe-player-linux-arm64": "0.2.0",
+    "mfe-player-darwin-x64": "0.2.0",
+    "mfe-player-darwin-arm64": "0.2.0",
+    "mfe-player-win32-x64": "0.2.0"
   }
 }

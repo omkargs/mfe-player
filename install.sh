@@ -482,13 +482,16 @@ trap cleanup EXIT INT TERM
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd || echo "$PWD")"
 
 DRY_RUN=0
+DEPS_ONLY=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run|--check|--preview) DRY_RUN=1 ;;
+        --deps-only) DEPS_ONLY=1 ;;
         -h|--help)
             printf 'mfe-player installer\n\n'
             printf '  bash install.sh              install everything\n'
             printf '  bash install.sh --dry-run    show every phase, change nothing\n'
+            printf '  bash install.sh --deps-only  install missing dependencies only\n'
             exit 0
             ;;
         *) printf 'unknown option: %s (try --help)\n' "$arg" >&2; exit 2 ;;
@@ -501,6 +504,16 @@ step "Environment"
 skip "$OS $ARCH"
 
 check_dependencies
+
+if [ "$DEPS_ONLY" = 1 ]; then
+    if [ "$DRY_RUN" = 1 ]; then
+        printf '\n  %sDry run — nothing was installed or changed.%s\n\n' "$C_YELLOW" "$C_RESET"
+    else
+        printf '\n  %sDependencies ready.%s\n\n' "$C_GREEN" "$C_RESET"
+    fi
+    exit 0
+fi
+
 install_mfe
 install_completions
 run_doctor

@@ -384,6 +384,10 @@ install_from_source() {
     if ! ( cd "$dir" && cargo build --release --locked ); then
         return 1
     fi
+    if [ ! -f "$dir/target/release/$NAME" ]; then
+        warn "the build reported success but produced no binary (was $dir removed mid-build?)"
+        return 1
+    fi
     install_binary "$dir/target/release/$NAME"
     ok "built and installed from source (kept at $dir)"
 }
@@ -413,7 +417,7 @@ install_mfe() {
     if [ "$FROM_SOURCE" = 0 ] && install_from_npm; then
         return 0
     fi
-    die "could not install mfe-player (no release, and neither cargo nor npm is available)"
+    die "could not install mfe-player (release download, source build and npm all failed — see above)"
 }
 
 # ---------------------------------------------------------------------------
@@ -465,6 +469,13 @@ run_doctor() {
     fi
     [ -x "$bin" ] || return 0
     step "Health check"
+
+    # Same guard as completions: an older binary treats `doctor` as a search
+    # query and opens the TUI, which would hang the installer.
+    if ! "$bin" --help 2>/dev/null | grep -qi "doctor"; then
+        skip "this binary has no doctor subcommand"
+        return 0
+    fi
     if "$bin" doctor; then
         ok "everything the player needs is in place"
     else

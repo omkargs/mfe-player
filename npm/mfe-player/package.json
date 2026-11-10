@@ -1,6 +1,6 @@
 {
   "name": "mfe-player",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A plugin-driven terminal music player: mpv, ratatui, no subscription, no account.",
   "license": "MIT",
   "repository": {

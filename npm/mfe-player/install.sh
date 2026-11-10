@@ -12,6 +12,8 @@ set -euo pipefail
 REPO="omkargs/mfe-player"
 NAME="mfe-player"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/mfe-player"
+SOURCE_DIR="${MFE_SOURCE_DIR:-$CACHE_DIR/src}"
 
 # ---------------------------------------------------------------------------
 # output
@@ -327,7 +329,7 @@ install_from_release() {
     triple="$(target_triple)"
     [ -z "$triple" ] && return 1
     if [ "$DRY_RUN" = 1 ]; then
-        dry "download the prebuilt $triple release (fallback: build from source)"
+        dry "download the prebuilt $triple release (fallback: clone into $SOURCE_DIR and build)"
         return 0
     fi
 
@@ -353,26 +355,37 @@ install_from_release() {
 }
 
 install_from_source() {
-    local dir="$1" tmp=""
+    local dir="$1"
     have cargo || return 1
-    if [ ! -f "$dir/Cargo.toml" ]; then
+    if [ "$DRY_RUN" = 1 ]; then
+        dry "clone/build in ${dir:-$SOURCE_DIR}"
+        return 0
+    fi
+
+    # Running from a checkout builds in place. Running from `curl | bash`
+    # (or anywhere else) clones into a persistent cache, so the next build
+    # is incremental instead of another throwaway /tmp/tmp.XXXX directory.
+    if [ -z "$dir" ] || [ ! -f "$dir/Cargo.toml" ]; then
         have git || return 1
-        tmp="$(mktemp -d)"
-        say "fetching the source"
-        if ! git clone --depth 1 "https://github.com/$REPO.git" "$tmp/src" >/dev/null 2>&1; then
-            rm -rf "$tmp"
+        say "fetching the source into $SOURCE_DIR"
+        mkdir -p "$(dirname "$SOURCE_DIR")"
+        if [ -d "$SOURCE_DIR/.git" ]; then
+            if ! git -C "$SOURCE_DIR" fetch --depth 1 origin master >/dev/null 2>&1 \
+                || ! git -C "$SOURCE_DIR" reset --hard FETCH_HEAD >/dev/null 2>&1; then
+                return 1
+            fi
+        elif ! git clone --depth 1 "https://github.com/$REPO.git" "$SOURCE_DIR" >/dev/null 2>&1; then
             return 1
         fi
-        dir="$tmp/src"
+        dir="$SOURCE_DIR"
     fi
-    say "building the release binary (a few minutes)"
+
+    say "building in $dir (a few minutes)"
     if ! ( cd "$dir" && cargo build --release --locked ); then
-        [ -n "$tmp" ] && rm -rf "$tmp"
         return 1
     fi
     install_binary "$dir/target/release/$NAME"
-    [ -n "$tmp" ] && rm -rf "$tmp"
-    ok "built and installed from source"
+    ok "built and installed from source (kept at $dir)"
 }
 
 install_from_npm() {
@@ -389,15 +402,15 @@ install_from_npm() {
 
 install_mfe() {
     step "mfe-player"
-    local dir="${SCRIPT_DIR:-$PWD}"
+    local dir="${SCRIPT_DIR:-}"
 
-    if install_from_release; then
+    if [ "$FROM_SOURCE" = 0 ] && install_from_release; then
         return 0
     fi
     if install_from_source "$dir"; then
         return 0
     fi
-    if install_from_npm; then
+    if [ "$FROM_SOURCE" = 0 ] && install_from_npm; then
         return 0
     fi
     die "could not install mfe-player (no release, and neither cargo nor npm is available)"
@@ -409,12 +422,20 @@ install_mfe() {
 
 install_completions() {
     step "Completions"
-    local bin="$PREFIX/$NAME"
+    local bin="${MFE_BIN:-$PREFIX/$NAME}"
+    [ -x "$bin" ] || { skip "binary is not installed"; return 0; }
+
+    # npm can carry an older platform binary than this installer (0.2.0 does
+    # not know `completions`; calling it would start the TUI and block).
+    if ! "$bin" --help 2>/dev/null | grep -qi "completions"; then
+        skip "this binary has no completions subcommand"
+        return 0
+    fi
+
     if [ "$DRY_RUN" = 1 ]; then
         dry "write bash/fish/zsh completions"
         return 0
     fi
-    [ -x "$bin" ] || { skip "binary is not installed"; return 0; }
 
     local bash_dir="$HOME/.local/share/bash-completion/completions"
     local fish_dir="$HOME/.config/fish/completions"
@@ -436,7 +457,7 @@ install_completions() {
 }
 
 run_doctor() {
-    local bin="$PREFIX/$NAME"
+    local bin="${MFE_BIN:-$PREFIX/$NAME}"
     if [ "$DRY_RUN" = 1 ]; then
         step "Health check"
         dry "run mfe doctor"
@@ -453,7 +474,13 @@ run_doctor() {
 
 finish() {
     printf '\n'
-    printf '  %s%sInstalled.%s\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
+    if [ "$DRY_RUN" = 1 ]; then
+        printf '  %s%sDry run complete.%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
+    elif [ "$SETUP_ONLY" = 1 ]; then
+        printf '  %s%sSetup complete.%s\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
+    else
+        printf '  %s%sInstalled.%s\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
+    fi
     printf '\n'
     printf '  %srun%s  %smfe%s          %sstart the player%s\n' "$C_DIM" "$C_RESET" "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
     printf '  %s     %smfe doctor%s    %scheck mpv, plugins and config%s\n' "$C_DIM" "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
@@ -479,19 +506,30 @@ finish() {
 cleanup() { printf '\033[?25h'; }
 trap cleanup EXIT INT TERM
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd || echo "$PWD")"
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    # curl | bash: there is no checkout, force the persistent clone path.
+    SCRIPT_DIR=""
+fi
 
 DRY_RUN=0
 DEPS_ONLY=0
+SETUP_ONLY=0
+FROM_SOURCE=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run|--check|--preview) DRY_RUN=1 ;;
         --deps-only) DEPS_ONLY=1 ;;
+        --setup|--npm-setup) SETUP_ONLY=1 ;;
+        --from-source|--source) FROM_SOURCE=1 ;;
         -h|--help)
             printf 'mfe-player installer\n\n'
             printf '  bash install.sh              install everything\n'
             printf '  bash install.sh --dry-run    show every phase, change nothing\n'
             printf '  bash install.sh --deps-only  install missing dependencies only\n'
+            printf '  bash install.sh --setup      deps + completions + doctor (no binary)\n'
+            printf '  bash install.sh --from-source  skip the release/npm lanes, build from git\n'
             exit 0
             ;;
         *) printf 'unknown option: %s (try --help)\n' "$arg" >&2; exit 2 ;;
@@ -511,6 +549,13 @@ if [ "$DEPS_ONLY" = 1 ]; then
     else
         printf '\n  %sDependencies ready.%s\n\n' "$C_GREEN" "$C_RESET"
     fi
+    exit 0
+fi
+
+if [ "$SETUP_ONLY" = 1 ]; then
+    install_completions
+    run_doctor
+    finish
     exit 0
 fi
 

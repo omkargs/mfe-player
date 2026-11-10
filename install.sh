@@ -384,10 +384,6 @@ install_from_source() {
     if ! ( cd "$dir" && cargo build --release --locked ); then
         return 1
     fi
-    if [ ! -f "$dir/target/release/$NAME" ]; then
-        warn "the build reported success but produced no binary (was $dir removed mid-build?)"
-        return 1
-    fi
     install_binary "$dir/target/release/$NAME"
     ok "built and installed from source (kept at $dir)"
 }

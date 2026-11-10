@@ -5,12 +5,25 @@
 // installed for this machine and hand it the arguments. No postinstall
 // download, no proxy surprises.
 //
-// Before the first real launch it also makes sure the runtime tools exist
-// (mpv, yt-dlp, python3). If any are missing it runs the bundled installer
-// with --deps-only, visibly, and then continues. MFE_SKIP_SETUP=1 disables it.
+// Before the first real launch it runs the bundled installer in --setup
+// mode: runtime tools (mpv, yt-dlp, python3), shell completions and a
+// doctor check. That is the npm equivalent of the curl installer, but it
+// never replaces the binary npm already installed. MFE_SKIP_SETUP=1
+// disables it; MFE_FORCE_SETUP=1 re-runs it.
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+
+function cacheDir() {
+  const base =
+    process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
+  return path.join(base, "mfe-player");
+}
+
+function setupMarker() {
+  return path.join(cacheDir(), "npm-setup.done");
+}
 
 function isMusl() {
   if (process.platform !== "linux") return false;
@@ -92,35 +105,46 @@ function missingDependencies() {
   return missing;
 }
 
-function setup() {
+function setup(bin) {
   const missing = missingDependencies();
+  const marker = setupMarker();
+  const firstRun = !fs.existsSync(marker);
   // MFE_FORCE_SETUP=1 re-runs the setup even when everything is present.
-  if (missing.length === 0 && !process.env.MFE_FORCE_SETUP) return;
+  if (missing.length === 0 && !firstRun && !process.env.MFE_FORCE_SETUP) return;
 
   const script = path.join(__dirname, "..", "install.sh");
   if (!fs.existsSync(script)) {
-    console.error(
-      `mfe-player: missing ${missing.join(", ")}; install them with your package manager.`,
-    );
+    if (missing.length > 0) {
+      console.error(
+        `mfe-player: missing ${missing.join(", ")}; install them with your package manager.`,
+      );
+    }
     return;
   }
 
   const reason =
     missing.length > 0
       ? `setting up ${missing.join(", ")}`
-      : "re-running dependency setup";
+      : "running first-time setup (completions + doctor)";
   console.error(
     `mfe-player: ${reason} before launch (MFE_SKIP_SETUP=1 skips this)`,
   );
-  const args = [script, "--deps-only"];
-  // Test hook: lets the launcher exercise the setup path without touching
-  // the machine. The installer itself prints the dry-run banner.
+
+  const args = [script, "--setup"];
+  // Test hook: exercise the setup path without touching the machine.
   if (process.env.MFE_SETUP_DRY_RUN) args.push("--dry-run");
-  const result = spawnSync("bash", args, { stdio: "inherit" });
+  const result = spawnSync("bash", args, {
+    stdio: "inherit",
+    env: { ...process.env, MFE_BIN: bin },
+  });
+
   if (result.error) {
     console.error(`mfe-player: could not run the installer: ${result.error.message}`);
   } else if (result.status !== 0) {
     console.error("mfe-player: setup did not finish; run `mfe doctor` for details.");
+  } else if (!process.env.MFE_SETUP_DRY_RUN) {
+    fs.mkdirSync(cacheDir(), { recursive: true });
+    fs.writeFileSync(marker, `${new Date().toISOString()}\n`);
   }
 }
 
@@ -134,7 +158,7 @@ if (!bin) {
 }
 
 if (shouldSetup(process.argv.slice(2))) {
-  setup();
+  setup(bin);
 }
 
 const result = spawnSync(bin, process.argv.slice(2), { stdio: "inherit" });

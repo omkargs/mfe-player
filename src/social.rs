@@ -219,6 +219,9 @@ mod tests {
             artwork: None,
             source: "test".to_string(),
             year: None,
+            genre: Vec::new(),
+            tags: Vec::new(),
+            auto_queued: false,
         }
     }
 

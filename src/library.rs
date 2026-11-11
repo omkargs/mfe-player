@@ -118,6 +118,17 @@ fn read_track(path: &Path) -> Option<Track> {
     let year = tag
         .and_then(|tag| tag.get_string(ItemKey::Year))
         .map(|value| value.trim().to_string());
+    let genre: Vec<String> = tag
+        .and_then(|tag| tag.genre())
+        .map(|value| {
+            value
+                .split(['/', ',', ';'])
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
     let artwork = embedded_art(path, tag);
 
     Some(Track {
@@ -129,6 +140,9 @@ fn read_track(path: &Path) -> Option<Track> {
         artwork,
         source: "local".to_string(),
         year,
+        genre,
+        tags: Vec::new(),
+        auto_queued: false,
     })
 }
 

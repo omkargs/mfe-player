@@ -69,6 +69,7 @@ def track_from(item):
     millis = item.get("trackTimeMillis")
     duration = int(millis / 1000) if millis else None
     release = item.get("releaseDate") or ""
+    genre = (item.get("primaryGenreName") or "").strip()
     return {
         "id": f"itunes:{item.get('trackId')}",
         "title": title,
@@ -78,6 +79,7 @@ def track_from(item):
         "artwork": artwork_url(item),
         "source": "itunes",
         "year": release[:4] if release else None,
+        "genre": [genre] if genre else [],
     }
 
 

@@ -557,14 +557,36 @@ title/artist/artwork; no crash when the API is unavailable.
 
 ## 12. Milestones
 
-| Milestone | Content | Estimate |
-|---|---|---|
-| M0 | Platform layer + green CI on 3 OS | 3–4 d |
-| M1 | Taste engine + autoplay + probes + `mfe taste` | 6–8 d |
-| M2 | Discord presence | 3–5 d |
-| M3 | npm packages for all targets + Windows installer + signing decision | 5–7 d |
-| M4 | SMTC/Now Playing + notifications | 4–6 d |
-| M5 | Backlog picks | ongoing |
+| Milestone | Content | Estimate | Status |
+|---|---|---|---|
+| M0 | Platform layer + green CI on 3 OS | 3–4 d | not started |
+| M1 | Taste engine + autoplay + probes + `mfe taste` | 6–8 d | **implemented locally · 30/30 tests green · pending TUI check + commit** |
+| M2 | Discord presence | 3–5 d | blocked on owner Discord app ID/assets |
+| M3 | npm packages for all targets + Windows installer + signing decision | 5–7 d | not started |
+| M4 | SMTC/Now Playing + notifications | 4–6 d | not started |
+| M5 | Backlog picks | ongoing | — |
+
+### 12.1 M1 implementation notes (2026-11-11)
+
+What landed differs slightly from the sketch above:
+
+* **`known_tags` provenance.** `taste.json` records which tags came from genre
+  metadata or plugin tags. Session and long-term weights still include title
+  words for similarity, but only `known_tags` are eligible as mismatch probes —
+  otherwise a track called "Midnight Phonk Mix" would make the player probe the
+  genre "midnight".
+* **Vetoes are decisive.** When a session tag falls to `≤ -2.0`, candidates
+  carrying it take an extra `-1.2 × tag weight` in scoring. MMR diversity alone
+  could otherwise re-insert a genre the listener just skipped five times.
+* **`mfe taste`.** `status` (default), `explain`, `reset [session|all|probes]`,
+  `like`, `dislike`. `dislike` blocks the current track for 30 days.
+* **Metadata.** iTunes emits `genre`, Radio Browser emits station `tags`,
+  MusicBrainz passes through genres/tags when present, and local files read
+  `genre` from their embedded tags.
+* **Previous restarts are not skips.** Pressing previous at index 0 just seeks
+  or restarts; only real track changes feed the profile.
+* **Autoplay fallbacks mark `auto_queued`** so completions of fallback tracks
+  count as autoplay picks, not deliberate listening.
 
 Recommended order: **M0 → M1 → M2** first. M1 is pure Rust and fully testable
 locally, so it can start in parallel with M0 if desired.

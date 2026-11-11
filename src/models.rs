@@ -13,6 +13,20 @@ pub struct Track {
     pub artwork: Option<String>,
     pub source: String,
     pub year: Option<String>,
+    /// Explicit genres from metadata plugins (iTunes, MusicBrainz, radio).
+    /// Weighted higher than free-form tags by the taste engine.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub genre: Vec<String>,
+    /// Free-form tags from plugins or local files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Set when autoplay queued the track instead of the listener.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub auto_queued: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Track {

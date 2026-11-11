@@ -64,6 +64,16 @@ def track_from(recording, album=None, artwork=None):
         "artwork": artwork,
         "source": "musicbrainz",
         "year": (recording.get("first-release-date") or "")[:4] or None,
+        "genre": [
+            (genre.get("name") or "").strip()
+            for genre in (recording.get("genres") or [])
+            if (genre.get("name") or "").strip()
+        ],
+        "tags": [
+            (tag.get("name") or "").strip()
+            for tag in (recording.get("tags") or [])
+            if (tag.get("name") or "").strip()
+        ][:8],
     }
 
 

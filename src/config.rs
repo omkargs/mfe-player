@@ -83,6 +83,10 @@ pub fn state_path() -> PathBuf {
     config_dir().join("state.json")
 }
 
+pub fn taste_path() -> PathBuf {
+    config_dir().join("taste.json")
+}
+
 pub fn config_path() -> PathBuf {
     config_dir().join("config.toml")
 }
@@ -262,6 +266,16 @@ pub struct AppConfig {
     pub icons: String,
     /// Desktop notification on track change.
     pub notifications: bool,
+    /// What to do when the queue ends: off | similar | taste.
+    pub autoplay: String,
+    /// How much the autoplay batch may wander outside the profile (0-1).
+    pub autoplay_explore: f64,
+    /// Suggest one deliberate out-of-profile probe every N autoplay picks.
+    pub autoplay_probe_every: u32,
+    /// Allow the occasional mismatch probe.
+    pub autoplay_probe: bool,
+    /// Learn from plays/skips. Turning this off keeps radio-style autoplay.
+    pub taste_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -292,6 +306,11 @@ impl Default for AppConfig {
             ambient_art: false,
             icons: "nerd".to_string(),
             notifications: false,
+            autoplay: "taste".to_string(),
+            autoplay_explore: 0.12,
+            autoplay_probe_every: 10,
+            autoplay_probe: true,
+            taste_enabled: true,
         }
     }
 }
@@ -317,6 +336,19 @@ prefetch = true
 
 # When the queue ends, keep playing related tracks (Spotify-style radio).
 radio = false
+
+# Autoplay when the queue ends and repeat is off: off | similar | taste.
+# "taste" learns from what you finish, repeat and skip and keeps the vibe.
+autoplay = "taste"
+
+# Learn a local taste profile from plays and skips (stored in taste.json).
+taste_enabled = true
+
+# How far the batch may wander outside the profile, and how often to try one
+# deliberate out-of-profile track (0 disables the mismatch probe).
+autoplay_explore = 0.12
+autoplay_probe = true
+autoplay_probe_every = 10
 
 # Mouse: wheel scrolls, click selects, double-click plays, click the progress bar to seek.
 mouse = true
@@ -390,6 +422,12 @@ pub fn load_config() -> (AppConfig, Option<String>) {
                 if !["off", "track", "album"].contains(&config.replaygain.as_str()) {
                     config.replaygain = "off".to_string();
                 }
+                config.autoplay = config.autoplay.to_ascii_lowercase();
+                if !["off", "similar", "taste"].contains(&config.autoplay.as_str()) {
+                    config.autoplay = "taste".to_string();
+                }
+                config.autoplay_explore = config.autoplay_explore.clamp(0.0, 1.0);
+                config.autoplay_probe_every = config.autoplay_probe_every.clamp(3, 100);
                 (config, None)
             }
             Err(err) => (

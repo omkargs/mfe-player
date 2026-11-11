@@ -13,6 +13,7 @@ mod notify;
 mod plugins;
 mod social;
 mod state;
+mod taste;
 mod theme;
 mod ui;
 mod update;
@@ -137,6 +138,56 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
+        Some("taste") => {
+            let (mut taste, warning) = taste::Taste::load();
+            if let Some(warning) = warning {
+                eprintln!("mfe-player: {warning}");
+            }
+            match raw_args.get(1).map(String::as_str).unwrap_or("status") {
+                "status" | "summary" => {
+                    print!("{}", taste.summary());
+                }
+                "explain" | "last" => {
+                    print!("{}", taste.explain_last());
+                }
+                "reset" => {
+                    let scope = raw_args.get(2).map(String::as_str).unwrap_or("all");
+                    if !["session", "all", "probes"].contains(&scope) {
+                        eprintln!("usage: mfe taste reset [session|all|probes]");
+                        return Ok(());
+                    }
+                    taste.reset(scope);
+                    taste.flush();
+                    println!("taste reset ({scope})");
+                }
+                "like" | "dislike" => {
+                    let state = state::PersistedState::load().0;
+                    match state.now_playing.as_ref() {
+                        Some(track) => {
+                            if raw_args[1] == "like" {
+                                taste.like(track);
+                                taste.flush();
+                                println!("liked “{}” — {}", track.title, track.artist);
+                            } else {
+                                taste.dislike(track);
+                                taste.flush();
+                                println!(
+                                    "disliked “{}” — {} (blocked for 30 days)",
+                                    track.title, track.artist
+                                );
+                            }
+                        }
+                        None => println!("nothing is playing"),
+                    }
+                }
+                _ => {
+                    eprintln!(
+                        "usage: mfe taste [status|explain|reset [session|all|probes]|like|dislike]"
+                    );
+                }
+            }
+            return Ok(());
+        }
         Some("completions") => {
             let shell = raw_args.get(1).map(String::as_str).unwrap_or("bash");
             print!("{}", completions(shell));
@@ -218,9 +269,10 @@ fn completions(shell: &str) -> String {
     match shell {
         "fish" => {
             r#"# mfe-player fish completions
-complete -c mfe -f -a "status current share theme doctor cache update toggle stop completions" -d "MFE Player"
+complete -c mfe -f -a "status current share theme taste doctor cache update toggle stop completions" -d "MFE Player"
 complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
 complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
+complete -c mfe -n "__fish_seen_subcommand_from taste" -a "status explain reset like dislike" -d "Taste profile"
 "#
         }
         "zsh" => {
@@ -231,6 +283,7 @@ _mfe() {
     'status:show what is playing'
     'current:one-line now playing'
     'share:copy now playing to the clipboard'
+    'taste:show or reset what autoplay has learned'
     'theme:show or adopt a colour theme'
     'doctor:check mpv, plugins, config and clipboard'
     'cache:show or clear the artwork cache'
@@ -251,6 +304,8 @@ _mfe() {
         _values 'shell' bash zsh fish
       elif [[ $words[2] == theme ]]; then
         _values 'action' adopt list
+      elif [[ $words[2] == taste ]]; then
+        _values 'action' status explain reset like dislike
       fi
       ;;
   esac
@@ -266,11 +321,13 @@ _mfe_player() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "status current share theme doctor cache update toggle stop completions" -- "$cur") )
+    COMPREPLY=( $(compgen -W "status current share theme taste doctor cache update toggle stop completions" -- "$cur") )
   elif [ "$prev" = "completions" ]; then
     COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
   elif [ "$prev" = "theme" ]; then
     COMPREPLY=( $(compgen -W "adopt list" -- "$cur") )
+  elif [ "$prev" = "taste" ]; then
+    COMPREPLY=( $(compgen -W "status explain reset like dislike" -- "$cur") )
   elif [ "$prev" = "cache" ]; then
     COMPREPLY=( $(compgen -W "clean" -- "$cur") )
   elif [ "$prev" = "update" ]; then
@@ -309,6 +366,9 @@ fn cli_action() -> CliAction {
                mfe-player cache [clean]   show or clear the artwork cache\n\
                mfe-player current         one-line now playing\n\
                mfe-player share           copy now playing to the clipboard\n\
+               mfe-player taste           what autoplay has learned\n\
+               mfe-player taste explain   why the last autoplay pick was chosen\n\
+               mfe-player taste reset     forget the profile (session|all|probes)\n\
                mfe-player toggle          play/pause the background player\n\
                mfe-player stop            stop playback and the daemon\n\
                mfe-player completions bash|zsh|fish\n\n\

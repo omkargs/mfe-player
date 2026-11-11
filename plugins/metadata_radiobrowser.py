@@ -51,9 +51,8 @@ def station_to_track(station):
     name = (station.get("name") or "").strip()
     if not name:
         return None
-    tags = ", ".join(
-        tag for tag in (station.get("tags") or "").split(",") if tag.strip()
-    )[:60]
+    tag_list = [tag.strip() for tag in (station.get("tags") or "").split(",") if tag.strip()]
+    tags = ", ".join(tag_list)[:60]
     country = (station.get("country") or "").strip()
     artist = " · ".join(part for part in (country, tags) if part) or "Live radio"
     return {
@@ -65,6 +64,7 @@ def station_to_track(station):
         "artwork": station.get("favicon") or None,
         "source": "radio-browser",
         "year": None,
+        "tags": tag_list[:8],
     }
 
 

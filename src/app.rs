@@ -23,6 +23,7 @@ use crate::mpris::{self, Mpris};
 use crate::plugins::{run_plugin, InstalledPlugin, PluginKind, PluginRegistry};
 use crate::social::Scrobbler;
 use crate::state::{HistoryEntry, PersistedState};
+use crate::taste::{AutoplayMode, Taste};
 use crate::theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -776,6 +777,9 @@ pub struct App {
     pub eq: String,
     pub normalize: bool,
     pub radio: bool,
+    pub autoplay: AutoplayMode,
+    pub taste: Taste,
+    probe_tags: HashMap<String, String>,
     radio_loading: bool,
     radio_advance: bool,
     radio_primed_for: Option<String>,
@@ -883,6 +887,14 @@ impl App {
         let downloads = load_downloads();
         let mpris = config.mpris.then(Mpris::start);
         let (persisted, state_warning) = PersistedState::load();
+        let (mut taste, taste_warning) = Taste::load();
+        let history_tracks: Vec<Track> = persisted
+            .history
+            .iter()
+            .take(200)
+            .map(|entry| entry.track.clone())
+            .collect();
+        taste.seed_if_empty(&history_tracks, &persisted.favorites);
         let mut plugins = PluginRegistry::load();
         let installed_defaults = plugins.ensure_defaults();
 
@@ -950,6 +962,7 @@ impl App {
         let cfg_eq = config.eq.clone();
         let cfg_normalize = config.normalize;
         let cfg_radio = config.radio;
+        let cfg_autoplay = AutoplayMode::parse(&config.autoplay);
         let cfg_prefetch = config.prefetch;
         let cfg_mouse = config.mouse;
         let listenbrainz_token = config.listenbrainz_token.clone();
@@ -1004,6 +1017,9 @@ impl App {
             },
             normalize: persisted.normalize || cfg_normalize,
             radio: persisted.radio || cfg_radio,
+            autoplay: cfg_autoplay,
+            taste,
+            probe_tags: HashMap::new(),
             radio_loading: false,
             radio_advance: false,
             radio_primed_for: None,
@@ -1080,6 +1096,9 @@ impl App {
         if let Some(warning) = state_warning {
             app.flash(warning);
         }
+        if let Some(warning) = taste_warning {
+            app.flash(warning);
+        }
         if let Some(err) = &app.audio_error {
             app.flash(err.clone());
         }
@@ -1113,7 +1132,9 @@ impl App {
         if let Some(track) = self.now_playing.clone() {
             let position = self.audio_snapshot().position;
             self.scrobbler.tick(&track, position);
+            self.taste.progress(position);
         }
+        self.taste.flush_if_due();
         self.update_fade();
 
         let ended = self
@@ -2558,14 +2579,18 @@ impl App {
         self.mark_dirty();
     }
 
+    fn autoplay_enabled(&self) -> bool {
+        self.autoplay != AutoplayMode::Off || self.radio
+    }
+
     fn toggle_radio(&mut self) {
         self.radio = !self.radio;
         self.radio_primed_for = None;
         self.radio_retry_at = None;
         self.flash(if self.radio {
-            "radio autoplay on — the queue keeps finding related tracks"
+            "autoplay on — the queue keeps finding tracks that fit"
         } else {
-            "radio autoplay off"
+            "autoplay off"
         });
         self.mark_dirty();
     }
@@ -2574,7 +2599,7 @@ impl App {
     /// background. By the time the song ends the queue already has somewhere
     /// to go, so the radio transition is gapless instead of a long resolve.
     fn maybe_prime_radio(&mut self) {
-        if !self.radio
+        if !self.autoplay_enabled()
             || self.radio_loading
             || self.repeat == RepeatMode::All
             || self.queue.is_empty()
@@ -2584,7 +2609,12 @@ impl App {
         let Some(index) = self.now_index else {
             return;
         };
-        if index + 1 < self.queue.len() {
+        let lookahead = if self.autoplay == AutoplayMode::Taste && self.config.taste_enabled {
+            2
+        } else {
+            1
+        };
+        if index + lookahead < self.queue.len() {
             return;
         }
         let Some(track) = self.now_playing.as_ref() else {
@@ -2604,7 +2634,7 @@ impl App {
     }
 
     fn start_radio(&mut self) {
-        if !self.radio || self.radio_loading {
+        if !self.autoplay_enabled() || self.radio_loading {
             return;
         }
         let Some(track) = self.now_playing.clone() else {
@@ -2623,11 +2653,20 @@ impl App {
             self.status = "queue finished · no metadata plugin for radio".to_string();
             return;
         };
-        // Try the artist first (a proper station), then the exact song, then
-        // the bare title. Obscure artists and cover bands often return nothing
-        // for an artist query; the title fallback still surfaces related
-        // recordings so the queue never dies on a quiet search.
+        // Taste mode turns the profile into a few broad searches ("phonk mix",
+        // then top artists). Radio mode keeps the old artist/title fallbacks.
         let mut queries = Vec::new();
+        if self.config.taste_enabled && self.autoplay == AutoplayMode::Taste {
+            for (tag, _) in self.taste.top_tags(3) {
+                if tag.starts_with("src ") || tag.starts_with("year ") {
+                    continue;
+                }
+                queries.push(format!("{tag} mix"));
+            }
+            for (artist, _) in self.taste.top_artists(2) {
+                queries.push(artist);
+            }
+        }
         if !track.artist.trim().is_empty() {
             queries.push(track.artist.clone());
         }
@@ -2637,9 +2676,10 @@ impl App {
             }
             queries.push(track.title.clone());
         }
-        queries.dedup();
+        let mut seen_queries = HashSet::new();
+        queries.retain(|query| !query.trim().is_empty() && seen_queries.insert(query.clone()));
         self.radio_loading = true;
-        self.status = format!("radio: finding more like {}…", query);
+        self.status = format!("autoplay: finding more like {}…", query);
         let tx = self.events_tx.clone();
         thread::spawn(move || {
             let mut found = Vec::new();
@@ -2667,52 +2707,83 @@ impl App {
         let current_id = self.now_playing.as_ref().map(|track| track.id.clone());
         let upcoming_start = self.now_index.map(|index| index + 1).unwrap_or(0);
         let queue_ids: HashSet<String> = self.queue.iter().map(|track| track.id.clone()).collect();
-        // Do not let the radio restart the song that just ended or the few
-        // songs before it; those are the most jarring repeats.
+        // Do not let autoplay restart the song that just ended or the few songs
+        // before it; those are the most jarring repeats.
         let recent_ids: HashSet<String> = self
             .queue
             .iter()
             .take(upcoming_start)
             .rev()
-            .take(4)
+            .take(20)
             .map(|track| track.id.clone())
             .collect();
 
-        let mut added = 0usize;
-        // Strict pass: nothing that is in the queue or recently played.
+        let mut candidates: Vec<Track> = Vec::new();
+        let mut seen = HashSet::new();
         for track in &tracks {
             if !track.is_valid()
                 || queue_ids.contains(&track.id)
-                || self.radio_history.contains(&track.id)
                 || current_id.as_deref() == Some(track.id.as_str())
+                || !seen.insert(track.id.clone())
             {
                 continue;
             }
-            self.queue.push(track.clone());
-            self.radio_history.insert(track.id.clone());
-            added += 1;
-            if added >= 30 {
-                break;
-            }
+            candidates.push(track.clone());
         }
 
-        // Relaxed pass: the station only knows songs that are already in the
-        // queue. Allow previously played songs to come back, but never the
-        // current one or the immediate past few.
+        let mut added = 0usize;
+        let taste_mode = self.config.taste_enabled
+            && self.autoplay == AutoplayMode::Taste
+            && !candidates.is_empty();
+        if taste_mode {
+            let recent: Vec<Track> = self
+                .queue
+                .iter()
+                .take(upcoming_start.min(self.queue.len()))
+                .rev()
+                .take(20)
+                .cloned()
+                .collect();
+            let plan = self.taste.plan_batch(
+                &candidates,
+                &recent,
+                15,
+                self.config.autoplay_probe,
+                self.config.autoplay_probe_every,
+            );
+            for mut track in plan.tracks {
+                track.auto_queued = true;
+                self.radio_history.insert(track.id.clone());
+                self.queue.push(track);
+                added += 1;
+            }
+            self.probe_tags.extend(plan.probes);
+        }
+
+        // Radio fallback (also used when taste has nothing to work with yet).
         if added == 0 {
-            for track in &tracks {
-                if !track.is_valid()
-                    || current_id.as_deref() == Some(track.id.as_str())
-                    || recent_ids.contains(&track.id)
-                    || self
-                        .queue
-                        .iter()
-                        .skip(upcoming_start)
-                        .any(|item| item.id == track.id)
-                {
+            for track in &candidates {
+                if self.radio_history.contains(&track.id) || recent_ids.contains(&track.id) {
                     continue;
                 }
-                self.queue.push(track.clone());
+                let mut track = track.clone();
+                track.auto_queued = true;
+                self.radio_history.insert(track.id.clone());
+                self.queue.push(track);
+                added += 1;
+                if added >= 30 {
+                    break;
+                }
+            }
+        }
+        if added == 0 {
+            for track in &candidates {
+                if recent_ids.contains(&track.id) {
+                    continue;
+                }
+                let mut track = track.clone();
+                track.auto_queued = true;
+                self.queue.push(track);
                 added += 1;
                 if added >= 15 {
                     break;
@@ -2723,12 +2794,26 @@ impl App {
         if added == 0 {
             self.radio_primed_for = None;
             self.radio_retry_at = Some(Instant::now() + Duration::from_secs(30));
-            self.status = "queue finished · radio found nothing new".to_string();
+            self.status = "queue finished · autoplay found nothing new".to_string();
             return;
         }
         self.radio_retry_at = None;
         self.mark_dirty();
-        self.flash(format!("radio queued {added} related tracks"));
+        if self.config.taste_enabled && self.autoplay == AutoplayMode::Taste {
+            let tag = self
+                .taste
+                .top_tags(1)
+                .first()
+                .map(|(tag, _)| tag.clone())
+                .unwrap_or_default();
+            if tag.is_empty() {
+                self.flash(format!("autoplay queued {added} tracks"));
+            } else {
+                self.flash(format!("autoplay queued {added} tracks · {tag}"));
+            }
+        } else {
+            self.flash(format!("radio queued {added} related tracks"));
+        }
         if advance {
             self.next_track(true);
         }
@@ -3681,6 +3766,10 @@ impl App {
     /// Whatever sat before the currently playing track in the queue is kept
     /// as history — only the future part of the queue is replaced.
     fn play_with_context(&mut self, selected: Track, context: Vec<Track>) {
+        if self.now_playing.as_ref().is_some_and(|item| item.id != selected.id) {
+            let position = self.audio_snapshot().position;
+            self.taste.skip(position);
+        }
         if self.audio.is_none() {
             let detail = self
                 .audio_error
@@ -3728,6 +3817,10 @@ impl App {
     }
 
     fn play_track_now(&mut self, track: Track) {
+        if self.now_playing.as_ref().is_some_and(|item| item.id != track.id) {
+            let position = self.audio_snapshot().position;
+            self.taste.skip(position);
+        }
         if self.audio.is_none() {
             let detail = self
                 .audio_error
@@ -3955,6 +4048,11 @@ impl App {
         if self.audio.is_none() {
             return;
         }
+        self.taste.begin(
+            &track,
+            track.auto_queued,
+            self.probe_tags.remove(&track.id),
+        );
         self.record_history(&track);
         self.request_artwork(&track);
         self.scrobbler.on_start(&track);
@@ -4177,6 +4275,7 @@ impl App {
             self.flash(format!("playback error: {err}"));
             return;
         }
+        self.taste.failed();
         self.flash(format!("could not play “{title}”; skipping"));
         self.next_track(true);
     }
@@ -4184,6 +4283,7 @@ impl App {
     fn on_track_ended(&mut self) {
         self.playback_retries = 0;
         self.playback_failures = 0;
+        self.taste.complete();
         if self.sleep == SleepMode::EndOfTrack {
             self.sleep = SleepMode::Off;
             self.restore_sleep_volume();
@@ -4219,6 +4319,10 @@ impl App {
     }
 
     fn next_track(&mut self, auto: bool) {
+        if !auto {
+            let position = self.audio_snapshot().position;
+            self.taste.skip(position);
+        }
         if self.queue.is_empty() {
             if auto {
                 self.status = "queue finished".to_string();
@@ -4245,15 +4349,15 @@ impl App {
         } else if self.repeat == RepeatMode::All && len > 0 {
             0
         } else {
-            if auto && self.radio {
+            if auto && self.autoplay_enabled() {
                 if self.radio_loading {
-                    self.status = "radio: finding more tracks…".to_string();
+                    self.status = "autoplay: finding more tracks…".to_string();
                 } else {
                     self.radio_advance = true;
                     self.start_radio();
                 }
             } else if auto {
-                self.status = "queue finished · z sleeps · Ctrl+T radio".to_string();
+                self.status = "queue finished · z sleeps · Ctrl+T autoplay".to_string();
             } else {
                 self.flash("end of queue");
             }
@@ -4270,13 +4374,19 @@ impl App {
             return;
         };
         if index > 0 {
+            let position = self.audio_snapshot().position;
+            self.taste.skip(position);
             self.play_queue_index(index - 1);
             return;
         }
         if self.repeat == RepeatMode::All && self.queue.len() > 1 {
+            let position = self.audio_snapshot().position;
+            self.taste.skip(position);
             self.play_queue_index(self.queue.len() - 1);
             return;
         }
+        // At the start of the queue: restart the current track or seek to 0.
+        // That is not a skip, so do not teach the taste profile anything.
         let position = self.audio_snapshot().position;
         if position > 3.0 {
             if let Some(audio) = self.audio.as_ref() {
@@ -4411,6 +4521,7 @@ impl App {
             self.flash(format!("removed “{}” from favorites", track.title));
         } else {
             self.favorites.push(track.clone());
+            self.taste.like(&track);
             self.flash(format!("★ favorited “{}”", track.title));
         }
         self.mark_dirty();
@@ -6019,7 +6130,7 @@ impl App {
         self.start_search(true);
     }
 
-    pub fn persist(&self) {
+    pub fn persist(&mut self) {
         let mut bookmarks = self.bookmarks.clone();
         if let Some(track) = &self.now_playing {
             let position = self.audio_snapshot().position;
@@ -6054,6 +6165,7 @@ impl App {
             bookmarks,
         };
         let _ = state.save();
+        self.taste.flush();
     }
 
     pub fn background_hint(&self) -> String {
@@ -6460,6 +6572,9 @@ fn import_link(url: &str) -> std::result::Result<LinkImport, String> {
             artwork,
             source: "link".to_string(),
             year: None,
+            genre: Vec::new(),
+            tags: Vec::new(),
+            auto_queued: false,
         });
     }
 

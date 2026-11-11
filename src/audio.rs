@@ -62,7 +62,10 @@ impl AudioEngine {
         };
 
         let mut stream = None;
-        if !private && socket_path.exists() {
+        if !private {
+            // Probe by connecting instead of checking the filesystem: Windows
+            // named pipes never appear as files. A failed connect is cheap and
+            // means either no mpv or a stale socket.
             if let Ok(probe) = probe_socket(&socket_path) {
                 stream = Some(probe);
             } else {
@@ -338,6 +341,9 @@ impl Drop for AudioEngine {
 }
 
 fn spawn_mpv(socket_path: &Path, volume: f64, audio_device: &str) -> Result<Child> {
+    // Named pipes on Windows live outside the filesystem; Unix sockets need
+    // their parent directory to exist and any stale socket removed first.
+    #[cfg(unix)]
     if let Some(parent) = socket_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -380,7 +386,7 @@ fn spawn_mpv(socket_path: &Path, volume: f64, audio_device: &str) -> Result<Chil
     }
 
     // Detach mpv from the terminal so closing the pane does not kill playback.
-    ipc::detach(&mut command);
+    ipc::hide_window(&mut command);
 
     command.spawn().map_err(|err| {
         anyhow!(

@@ -56,7 +56,6 @@ impl AutoplayMode {
             _ => Self::Taste,
         }
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -307,38 +306,32 @@ struct Candidate {
 impl Taste {
     pub fn load() -> (Self, Option<String>) {
         let path = config::taste_path();
-        let mut taste = match fs::read_to_string(&path) {
+        let (mut taste, warning) = match fs::read_to_string(&path) {
             Ok(raw) => match serde_json::from_str::<Self>(&raw) {
-                Ok(taste) => taste,
+                Ok(taste) => (taste, None),
                 Err(err) => (
                     Self::default(),
                     Some(format!("taste.json is invalid, starting fresh: {err}")),
-                )
-                    .0,
+                ),
             },
-            Err(_) => Self::default(),
+            Err(_) => (Self::default(), None),
         };
         let now = now_unix();
         taste.decay(now);
         taste.last_save = Some(Instant::now());
-        let warning = if path.exists() {
-            None
-        } else {
-            None
-        };
         (taste, warning)
     }
 
     pub fn save(&self) -> Result<()> {
         let path = config::taste_path();
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
         let raw = serde_json::to_string_pretty(self)?;
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, raw).with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))?;
+        crate::platform::fs_util::replace_file(&tmp, &path)
+            .with_context(|| format!("replacing {}", path.display()))?;
         Ok(())
     }
 
@@ -369,10 +362,7 @@ impl Taste {
     /// Warm the long-term profile from existing history/favourites the first
     /// time taste is enabled. Played tracks count less than explicit favourites.
     pub fn seed_if_empty(&mut self, history: &[Track], favorites: &[Track]) {
-        if self.seeded
-            || !self.long_term.tags.is_empty()
-            || !self.long_term.artists.is_empty()
-        {
+        if self.seeded || !self.long_term.tags.is_empty() || !self.long_term.artists.is_empty() {
             return;
         }
         for (index, track) in history.iter().take(200).enumerate() {
@@ -479,9 +469,7 @@ impl Taste {
         };
         let kind = if position < 15.0 {
             EventKind::QuickSkip
-        } else if position < 40.0 && fraction < 0.5 {
-            EventKind::Skip
-        } else if fraction < 0.4 {
+        } else if (position < 40.0 && fraction < 0.5) || fraction < 0.4 {
             EventKind::Skip
         } else if fraction < 0.75 {
             EventKind::SoftSkip
@@ -615,11 +603,7 @@ impl Taste {
         } else if kind.negative() {
             self.probes.failures = self.probes.failures.saturating_add(1);
             *self.long_term.tags.entry(tag.clone()).or_insert(0.0) -= 0.2;
-            let failures = self
-                .probes
-                .failures_by_tag
-                .entry(tag.clone())
-                .or_insert(0);
+            let failures = self.probes.failures_by_tag.entry(tag.clone()).or_insert(0);
             *failures = failures.saturating_add(1);
             if *failures >= 2 {
                 self.probes
@@ -817,7 +801,10 @@ impl Taste {
             }
         }
 
-        let tracks = picked.into_iter().map(|candidate| candidate.track).collect();
+        let tracks = picked
+            .into_iter()
+            .map(|candidate| candidate.track)
+            .collect();
         BatchPlan { tracks, probes }
     }
 
@@ -853,7 +840,11 @@ impl Taste {
         } else {
             0.0
         };
-        let explore = if self.top_effective_tags(3).iter().any(|(tag, _)| tag == &primary) {
+        let explore = if self
+            .top_effective_tags(3)
+            .iter()
+            .any(|(tag, _)| tag == &primary)
+        {
             0.0
         } else {
             0.3
@@ -1049,7 +1040,9 @@ impl Taste {
             .long_term
             .tags
             .iter()
-            .filter(|(tag, weight)| **weight > 1.0 && !top.contains(*tag) && self.known_tags.contains(*tag))
+            .filter(|(tag, weight)| {
+                **weight > 1.0 && !top.contains(*tag) && self.known_tags.contains(*tag)
+            })
             .collect();
         long.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
         long.first().map(|(tag, _)| (*tag).clone())
@@ -1300,18 +1293,65 @@ fn canonical_tag(raw: &str) -> String {
 
 fn tokenize(raw: &str) -> Vec<String> {
     const STOP: &[&str] = &[
-        "the", "and", "for", "with", "from", "this", "that", "you", "your", "our", "are", "was",
-        "were", "his", "her", "its", "not", "but", "all", "can", "out", "get", "got", "one", "two",
-        "official", "video", "audio", "lyrics", "lyric", "feat", "ft", "prod", "prodby", "visualizer",
-        "hd", "hq", "explicit", "album", "single", "version", "edit", "full", "song", "music",
-        "mix", "playlist", "best", "new", "free", "download", "original",
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "this",
+        "that",
+        "you",
+        "your",
+        "our",
+        "are",
+        "was",
+        "were",
+        "his",
+        "her",
+        "its",
+        "not",
+        "but",
+        "all",
+        "can",
+        "out",
+        "get",
+        "got",
+        "one",
+        "two",
+        "official",
+        "video",
+        "audio",
+        "lyrics",
+        "lyric",
+        "feat",
+        "ft",
+        "prod",
+        "prodby",
+        "visualizer",
+        "hd",
+        "hq",
+        "explicit",
+        "album",
+        "single",
+        "version",
+        "edit",
+        "full",
+        "song",
+        "music",
+        "mix",
+        "playlist",
+        "best",
+        "new",
+        "free",
+        "download",
+        "original",
     ];
     raw.to_ascii_lowercase()
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|word| word.len() >= 3 && word.len() <= 24)
         .filter(|word| !STOP.contains(word))
         .filter(|word| !word.chars().all(|ch| ch.is_ascii_digit()))
-        .map(|word| canonical_tag(word))
+        .map(canonical_tag)
         .filter(|word| !word.is_empty())
         .collect()
 }
@@ -1393,7 +1433,10 @@ mod tests {
 
     fn profile_with(phonk_weight: f64) -> Taste {
         let mut taste = Taste::default();
-        taste.long_term.tags.insert("phonk".to_string(), phonk_weight);
+        taste
+            .long_term
+            .tags
+            .insert("phonk".to_string(), phonk_weight);
         taste.long_term.tags.insert("src youtube".to_string(), 2.0);
         taste.long_term.artists.insert("dj test".to_string(), 4.0);
         taste.known_tags.insert("phonk".to_string());
@@ -1467,8 +1510,10 @@ mod tests {
 
     #[test]
     fn completions_raise_the_tag_weight() {
-        let mut taste = Taste::default();
-        taste.seeded = true;
+        let mut taste = Taste {
+            seeded: true,
+            ..Default::default()
+        };
         for index in 0..3 {
             let track = phonk(&format!("p-{index}"));
             taste.begin(&track, false, None);
@@ -1527,8 +1572,10 @@ mod tests {
 
     #[test]
     fn dislike_blocks_the_track() {
-        let mut taste = Taste::default();
-        taste.seeded = true;
+        let mut taste = Taste {
+            seeded: true,
+            ..Default::default()
+        };
         let bad = jazz("bad", "Someone");
         taste.dislike(&bad);
         let mut candidates = vec![bad.clone()];

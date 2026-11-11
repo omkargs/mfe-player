@@ -133,22 +133,6 @@ fn ascii_glyph(symbol: &str) -> Option<&'static str> {
     })
 }
 
-/// Unit-testable mapping used by [`ascii_safe`].
-#[cfg(test)]
-mod ascii_tests {
-    use super::ascii_glyph;
-
-    #[test]
-    fn maps_decoration_but_not_text() {
-        assert_eq!(ascii_glyph("▶"), Some(">"));
-        assert_eq!(ascii_glyph("╭"), Some("+"));
-        assert_eq!(ascii_glyph("█"), Some("="));
-        assert_eq!(ascii_glyph("★"), Some("*"));
-        assert_eq!(ascii_glyph("A"), None);
-        assert_eq!(ascii_glyph("é"), None);
-    }
-}
-
 /// The full-screen now-playing view: big cover on the left, track details and
 /// synced lyrics on the right. Everything is derived from state the app
 /// already keeps, so it stays correct while the track changes underneath it.
@@ -3379,5 +3363,21 @@ fn centered_fixed(area: Rect, width: u16, height: u16) -> Rect {
         y: area.y + (area.height.saturating_sub(height)) / 2,
         width,
         height,
+    }
+}
+
+/// Unit-testable mapping used by [`ascii_safe`].
+#[cfg(test)]
+mod ascii_tests {
+    use super::ascii_glyph;
+
+    #[test]
+    fn maps_decoration_but_not_text() {
+        assert_eq!(ascii_glyph("▶"), Some(">"));
+        assert_eq!(ascii_glyph("╭"), Some("+"));
+        assert_eq!(ascii_glyph("█"), Some("="));
+        assert_eq!(ascii_glyph("★"), Some("*"));
+        assert_eq!(ascii_glyph("A"), None);
+        assert_eq!(ascii_glyph("é"), None);
     }
 }

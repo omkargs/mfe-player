@@ -9,31 +9,34 @@ jobs:
   build:
     name: build & test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            experimental: false
-          - os: macos-latest
-            experimental: false
-          # Windows support is wired through a named-pipe IPC layer but has not
-          # been exercised by a maintainer on real hardware yet.
-          - os: windows-latest
-            experimental: true
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Format
         run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Build
         run: cargo build --release --locked
 
       - name: Test
         run: cargo test --locked
+
+      - name: Version smoke test
+        shell: bash
+        run: |
+          if [[ -f target/release/mfe-player.exe ]]; then
+            ./target/release/mfe-player.exe --version
+          else
+            ./target/release/mfe-player --version
+          fi

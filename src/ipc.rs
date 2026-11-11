@@ -76,6 +76,24 @@ pub fn detach(command: &mut std::process::Command) {
     command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
 }
 
+/// Spawn a child that must keep working standard handles. `DETACHED_PROCESS`
+/// can break stdio inheritance, so children like mpv get a hidden console and
+/// their own process group instead. On Unix this is the same as `detach`.
+pub fn hide_window(command: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    }
+    #[cfg(unix)]
+    {
+        detach(command);
+    }
+}
+
 /// Is this process still alive? Unix gets the real answer from `kill(pid, 0)`;
 /// Windows asks `tasklist`. The daemon only calls this at startup, so a process
 /// spawn there is acceptable.

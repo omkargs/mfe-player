@@ -160,7 +160,7 @@ fn download(url: &str, dest: &Path) -> Result<()> {
     if !output.status.success() {
         return Err(anyhow!(
             "{}",
-            String::from_utf8_lossy(&output.stderr).trim().to_string()
+            String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
     Ok(())

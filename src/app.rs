@@ -19,7 +19,7 @@ use crate::models::{
     parse_lyrics, truncate, Album, Artist, LyricLine, LyricsDoc, Playlist, SearchPayload,
     SearchResults, StreamInfo, Track,
 };
-use crate::mpris::{self, Mpris};
+use crate::platform::media::{self as mpris, Mpris};
 use crate::plugins::{run_plugin, InstalledPlugin, PluginKind, PluginRegistry};
 use crate::social::Scrobbler;
 use crate::state::{HistoryEntry, PersistedState};
@@ -883,7 +883,8 @@ impl App {
         let theme_name = theme::apply_configured_with(&config.theme, Some(&config.wallpaper));
         theme::set_transparent(config.transparent);
         let cava_enabled = config.cava;
-        let cava = (!headless && cava_enabled).then(|| Cava::spawn(config.cava_bars));
+        let cava = (!headless && cava_enabled && cfg!(target_os = "linux"))
+            .then(|| Cava::spawn(config.cava_bars));
         let downloads = load_downloads();
         let mpris = config.mpris.then(Mpris::start);
         let (persisted, state_warning) = PersistedState::load();
@@ -1331,6 +1332,9 @@ impl App {
             KeyCode::Char('\\') => self.reset_speed(),
             KeyCode::Char('z') => self.open_sleep_timer(),
             KeyCode::Char('E') => self.cycle_eq(),
+            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.now_playing_fullscreen = !self.now_playing_fullscreen;
+            }
             KeyCode::Char('v') => self.toggle_mark(),
             KeyCode::Char('V') => self.mark_all_current(),
             KeyCode::Char('S') => self.save_queue_as_playlist(),
@@ -1360,9 +1364,6 @@ impl App {
             }
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.toggle_ambient_art()
-            }
-            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::ALT) => {
-                self.now_playing_fullscreen = !self.now_playing_fullscreen;
             }
             KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.seek(-self.config.long_seek_step)
@@ -3766,7 +3767,11 @@ impl App {
     /// Whatever sat before the currently playing track in the queue is kept
     /// as history — only the future part of the queue is replaced.
     fn play_with_context(&mut self, selected: Track, context: Vec<Track>) {
-        if self.now_playing.as_ref().is_some_and(|item| item.id != selected.id) {
+        if self
+            .now_playing
+            .as_ref()
+            .is_some_and(|item| item.id != selected.id)
+        {
             let position = self.audio_snapshot().position;
             self.taste.skip(position);
         }
@@ -3817,7 +3822,11 @@ impl App {
     }
 
     fn play_track_now(&mut self, track: Track) {
-        if self.now_playing.as_ref().is_some_and(|item| item.id != track.id) {
+        if self
+            .now_playing
+            .as_ref()
+            .is_some_and(|item| item.id != track.id)
+        {
             let position = self.audio_snapshot().position;
             self.taste.skip(position);
         }
@@ -4048,11 +4057,8 @@ impl App {
         if self.audio.is_none() {
             return;
         }
-        self.taste.begin(
-            &track,
-            track.auto_queued,
-            self.probe_tags.remove(&track.id),
-        );
+        self.taste
+            .begin(&track, track.auto_queued, self.probe_tags.remove(&track.id));
         self.record_history(&track);
         self.request_artwork(&track);
         self.scrobbler.on_start(&track);

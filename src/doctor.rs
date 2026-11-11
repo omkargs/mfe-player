@@ -22,14 +22,18 @@ pub fn run() -> i32 {
     ) {
         broken += 1;
     }
-    if find_binary("python3")
-        .or_else(|| find_binary("python"))
-        .is_none()
-    {
-        println!("  x python3    plugins cannot run — install python3");
-        broken += 1;
-    } else {
-        println!("  ok python3   plugin runtime");
+    match find_binary("python3").or_else(|| find_binary("python")) {
+        Some(python) => println!(
+            "  ok {}   plugin runtime",
+            python
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("python")
+        ),
+        None => {
+            println!("  x python3    plugins cannot run — install python3");
+            broken += 1;
+        }
     }
     optional_binary(
         "yt-dlp",
@@ -37,8 +41,11 @@ pub fn run() -> i32 {
         "cargo install yt-dlp (or pipx install yt-dlp)",
     );
     optional_binary("ffmpeg", "downloads", "install ffmpeg");
-    optional_binary("cava", "spectrum visualiser", "install cava");
-    optional_binary("playerctl", "media keys", "install playerctl");
+    #[cfg(target_os = "linux")]
+    {
+        optional_binary("cava", "spectrum visualiser", "install cava");
+        optional_binary("playerctl", "media keys", "install playerctl");
+    }
 
     println!();
     println!("configuration");
@@ -91,6 +98,7 @@ pub fn run() -> i32 {
     } else {
         println!("  ·  mpv is not running right now (fine)");
     }
+    #[cfg(target_os = "linux")]
     if app_config.mpris {
         println!("  ok MPRIS enabled (Linux media keys)");
     }

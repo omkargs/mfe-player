@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::Read;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -290,6 +289,8 @@ impl PluginRegistry {
             .with_context(|| format!("writing {}", entry_path.display()))?;
         #[cfg(unix)]
         {
+            use std::os::unix::fs::PermissionsExt;
+
             let mut permissions = fs::metadata(&entry_path)?.permissions();
             permissions.set_mode(0o755);
             fs::set_permissions(&entry_path, permissions)?;
@@ -388,7 +389,7 @@ pub fn run_plugin(plugin: &InstalledPlugin, args: &[String], timeout: Duration) 
         #[cfg(windows)]
         {
             // Windows has no shebangs: run the script through Python.
-            let mut command = Command::new("python3");
+            let mut command = Command::new("python");
             command.arg(&entry);
             command
         }

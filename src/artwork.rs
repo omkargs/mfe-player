@@ -180,6 +180,7 @@ pub fn load(url: &str) -> Result<Artwork> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn aged_file(path: &Path, bytes: usize, seconds_ago: u64) {
         fs::write(path, vec![7u8; bytes]).unwrap();

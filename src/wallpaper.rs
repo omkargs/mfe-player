@@ -67,7 +67,7 @@ pub fn palette_from_rgb(image: &RgbImage) -> Theme {
         fg: hsl(hue, chroma * 0.14, 0.90),
         dim: hsl(hue, chroma * 0.18, 0.62),
         faint: hsl(hue, chroma * 0.16, 0.44),
-        accent: hsl(hue, chroma.max(0.55).min(0.95), 0.64),
+        accent: hsl(hue, chroma.clamp(0.55, 0.95), 0.64),
         accent2: hsl((hue + 0.5) % 1.0, 0.72, 0.66),
         // Semantic colours stay predictable; people rely on green/yellow/red.
         green: Color::Rgb(126, 231, 135),
@@ -237,8 +237,7 @@ fn unix_desktop_detect() -> Option<PathBuf> {
             .lines()
             .filter_map(|line| line.split("image:").nth(1))
             .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .last()
+            .rfind(|value| !value.is_empty())
         {
             return Some(PathBuf::from(path));
         }
@@ -250,8 +249,7 @@ fn unix_desktop_detect() -> Option<PathBuf> {
             .lines()
             .filter_map(|line| line.split('=').nth(1))
             .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .last()
+            .rfind(|value| !value.is_empty())
         {
             return Some(PathBuf::from(path));
         }
@@ -265,7 +263,7 @@ fn unix_desktop_detect() -> Option<PathBuf> {
             .lines()
             .filter_map(|line| line.strip_prefix("Image="))
             .filter_map(parse_file_uri)
-            .last()
+            .next_back()
         {
             return Some(path);
         }

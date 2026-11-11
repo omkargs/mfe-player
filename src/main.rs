@@ -8,8 +8,10 @@ mod doctor;
 mod ipc;
 mod library;
 mod models;
+#[cfg(target_os = "linux")]
 mod mpris;
 mod notify;
+mod platform;
 mod plugins;
 mod social;
 mod state;

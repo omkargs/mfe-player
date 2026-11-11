@@ -122,7 +122,8 @@ impl PersistedState {
         let raw = serde_json::to_string_pretty(self)?;
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, raw).with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))?;
+        crate::platform::fs_util::replace_file(&tmp, &path)
+            .with_context(|| format!("replacing {}", path.display()))?;
         Ok(())
     }
 }

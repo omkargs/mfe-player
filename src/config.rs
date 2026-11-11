@@ -34,10 +34,8 @@ fn legacy_cache_dir() -> PathBuf {
 pub fn migrate_legacy() {
     let new = config_dir();
     let old = legacy_config_dir();
-    if !new.exists() && old.is_dir() {
-        if fs::rename(&old, &new).is_err() {
-            let _ = copy_dir(&old, &new);
-        }
+    if !new.exists() && old.is_dir() && fs::rename(&old, &new).is_err() {
+        let _ = copy_dir(&old, &new);
     }
     let new_cache = cache_dir();
     let old_cache = legacy_cache_dir();
@@ -404,10 +402,17 @@ icons = "nerd"
 notifications = false
 "#;
 
+fn write_atomic(path: &std::path::Path, raw: &str) {
+    let tmp = path.with_extension("toml.tmp");
+    if fs::write(&tmp, raw).is_ok() {
+        let _ = crate::platform::fs_util::replace_file(&tmp, path);
+    }
+}
+
 pub fn load_config() -> (AppConfig, Option<String>) {
     let path = config_path();
     if !path.exists() {
-        let _ = fs::write(&path, DEFAULT_CONFIG);
+        write_atomic(&path, DEFAULT_CONFIG);
         return (AppConfig::default(), None);
     }
     match fs::read_to_string(&path) {
@@ -466,7 +471,7 @@ fn set_key_in_file(key: &str, value: &str) {
     if !replaced {
         out.push_str(&format!("{key} = {value}\n"));
     }
-    let _ = fs::write(path, out);
+    write_atomic(&path, &out);
 }
 
 /// Rewrite just the `theme` line so user comments in config.toml survive.

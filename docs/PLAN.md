@@ -559,7 +559,7 @@ title/artist/artwork; no crash when the API is unavailable.
 
 | Milestone | Content | Estimate | Status |
 |---|---|---|---|
-| M0 | Platform layer + green CI on 3 OS | 3–4 d | not started |
+| M0 | Platform layer + green CI on 3 OS | 3–4 d | **foundation landed locally · target gating + platform layer + Windows fixes · CI matrix updated, needs a run** |
 | M1 | Taste engine + autoplay + probes + `mfe taste` | 6–8 d | **implemented locally · 30/30 tests green · pending TUI check + commit** |
 | M2 | Discord presence | 3–5 d | blocked on owner Discord app ID/assets |
 | M3 | npm packages for all targets + Windows installer + signing decision | 5–7 d | not started |
@@ -587,6 +587,23 @@ What landed differs slightly from the sketch above:
   or restarts; only real track changes feed the profile.
 * **Autoplay fallbacks mark `auto_queued`** so completions of fallback tracks
   count as autoplay picks, not deliberate listening.
+
+### 12.2 M0 progress (2026-11-11)
+
+* `mpris-server` and `libc` are now platform-scoped dependencies; the Linux MPRIS
+  module is only compiled on Linux.
+* New `src/platform/` layer: `media` (MPRIS on Linux, inert stub elsewhere) and
+  `fs_util::replace_file` for atomic writes that work when Windows refuses to
+  rename over an existing file.
+* Windows IPC fixes: mpv is probed by connecting instead of `Path::exists()`,
+  socket directories are only created on Unix, and mpv is spawned with
+  `CREATE_NO_WINDOW` instead of `DETACHED_PROCESS`.
+* Config, state and taste writes now go through the platform replace helper.
+* Plugins run through `python` on Windows, permission bits are Unix-only, cava is
+  Linux-only, and doctor reports platform-appropriate checks.
+* CI matrix now includes Windows as a supported target and runs fmt + clippy.
+* Still open for M0: a Windows daemon control channel (graceful stop without
+  `taskkill`), pid + start-time files, and an actual CI/hardware run.
 
 Recommended order: **M0 → M1 → M2** first. M1 is pure Rust and fully testable
 locally, so it can start in parallel with M0 if desired.

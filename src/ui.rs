@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use crate::app::{
     palette_ranked, App, FilterKind, HitAction, Overlay, PaletteItem, View, PALETTE_ITEMS,
@@ -20,10 +20,17 @@ fn th() -> theme::Theme {
     theme::get()
 }
 
-/// Render phase shared with helpers that do not take `&App` (track rows).
-/// Set once per frame from `App::phase()`.
+/// Render phase and smoothed audio levels shared with helpers that do not
+/// take `&App` (track rows, bars). Set once per frame from `App`.
 static UI_PHASE: AtomicUsize = AtomicUsize::new(0);
 static UI_PULSE: AtomicU32 = AtomicU32::new(0);
+static UI_ENERGY: AtomicU32 = AtomicU32::new(0);
+static UI_BASS: AtomicU32 = AtomicU32::new(0);
+static UI_MID: AtomicU32 = AtomicU32::new(0);
+static UI_TREBLE: AtomicU32 = AtomicU32::new(0);
+static UI_MOTION: AtomicBool = AtomicBool::new(true);
+/// Raw spectrum copied once per frame for compact wave meters.
+static UI_WAVE: std::sync::Mutex<Vec<f32>> = std::sync::Mutex::new(Vec::new());
 
 fn phase() -> usize {
     UI_PHASE.load(Ordering::Relaxed)
@@ -33,45 +40,83 @@ fn pulse() -> f32 {
     f32::from_bits(UI_PULSE.load(Ordering::Relaxed))
 }
 
+fn energy() -> f32 {
+    f32::from_bits(UI_ENERGY.load(Ordering::Relaxed))
+}
+
+fn bass() -> f32 {
+    f32::from_bits(UI_BASS.load(Ordering::Relaxed))
+}
+
+fn mid() -> f32 {
+    f32::from_bits(UI_MID.load(Ordering::Relaxed))
+}
+
+fn treble() -> f32 {
+    f32::from_bits(UI_TREBLE.load(Ordering::Relaxed))
+}
+
+fn motion() -> bool {
+    UI_MOTION.load(Ordering::Relaxed)
+}
+
 /// Blend towards the accent without replacing the base colour, so glow effects
 /// stay readable on every theme (including mono).
 fn glow(base: Color, accent: Color, amount: f32) -> Color {
     mix(base, accent, amount.clamp(0.0, 1.0))
 }
 
-/// Animated gradient: a highlight sweeps across the text instead of sitting
-/// still. The wave is subtle so long titles stay legible.
+/// Bass-reactive glow: quiet passages stay calm, loud ones breathe.
+fn beat_glow(base: Color, accent: Color, floor: f32, depth: f32) -> Color {
+    glow(base, accent, floor + depth * bass() + 0.25 * pulse())
+}
+
+/// Animated gradient with a soft highlight that takes about fifteen seconds to
+/// cross the text. Loud music widens the shimmer; motion off freezes it.
 fn animated_gradient(text: &str, from: Color, to: Color, modifier: Modifier) -> Vec<Span<'static>> {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len().max(1) as f32;
-    let travel = (phase() as f32 * 0.035) % 2.0;
+    let shimmer = if motion() {
+        0.18 + energy() * 0.32
+    } else {
+        0.0
+    };
+    let travel = if motion() {
+        (phase() as f32 * 0.009) % 1.0
+    } else {
+        0.0
+    };
     chars
         .iter()
         .enumerate()
         .map(|(index, ch)| {
             let base = index as f32 / len;
-            let wave = ((base - travel + 1.0) % 1.0).min(1.0);
-            // Smooth triangular wave: 0 → 1 → 0 across the text.
-            let t = 1.0 - (wave * 2.0 - 1.0).abs();
+            let distance = (base - travel + 1.0) % 1.0;
+            // Bell-shaped wave, never fully dark, so shortcuts stay legible.
+            let wave = 1.0 - (distance * 2.0 - 1.0).abs();
+            let t = (base * (1.0 - shimmer) + wave * shimmer).clamp(0.0, 1.0);
             Span::styled(
                 ch.to_string(),
-                Style::default()
-                    .fg(mix(from, to, base * 0.6 + t * 0.4))
-                    .add_modifier(modifier),
+                Style::default().fg(mix(from, to, t)).add_modifier(modifier),
             )
         })
         .collect()
 }
 
-/// A one-cell-tall rule whose hue drifts, used under the header.
+/// A one-cell-tall rule whose hue drifts slowly, used under the header.
 fn gradient_rule(width: usize) -> Line<'static> {
-    let travel = (phase() as f32 * 0.02) % 1.0;
+    let travel = if motion() {
+        (phase() as f32 * 0.006) % 1.0
+    } else {
+        0.0
+    };
+    let lift = 0.15 + energy() * 0.35;
     let spans: Vec<Span<'static>> = (0..width)
         .map(|index| {
             let base = index as f32 / width.max(1) as f32;
             let t = (base + travel) % 1.0;
             let colour = if t < 0.5 {
-                mix(th().accent, th().accent2, t * 2.0)
+                mix(th().accent, th().accent2, (t * 2.0).min(lift * 2.0))
             } else {
                 mix(th().accent2, th().border, (t - 0.5) * 2.0)
             };
@@ -81,15 +126,25 @@ fn gradient_rule(width: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Horizontal scroll for text that does not fit. Adds a gap and wraps around
-/// so the beginning is readable again after a slow pass.
+/// Horizontal scroll for text that does not fit: hold at the start, roll
+/// slowly, then hold again. No endless twitch, no lost beginnings.
 fn marquee(text: &str, width: usize, gap: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     if chars.len() <= width || width == 0 {
         return text.to_string();
     }
+    if !motion() {
+        return chars.iter().take(width).collect();
+    }
+    const DWELL: usize = 46; // ~2.3 s at the 50 ms tick
     let cycle = chars.len() + gap;
-    let offset = (phase() / 3) % cycle;
+    let period = DWELL + cycle * 2;
+    let position = phase() % period;
+    let offset = if position < DWELL {
+        0
+    } else {
+        (position - DWELL) / 2 % cycle
+    };
     let mut out = String::with_capacity(width);
     for step in 0..width {
         let index = (offset + step) % cycle;
@@ -102,23 +157,66 @@ fn marquee(text: &str, width: usize, gap: usize) -> String {
     out
 }
 
-/// Tiny playing indicator that bounces while audio runs and freezes on pause.
-fn eq_bars(paused: bool) -> String {
-    const FRAMES: [&str; 8] = [
-        "▁▃▅▇",
-        "▂▄▆▇",
-        "▃▅▇▆",
-        "▄▆▇▅",
-        "▅▇▆▄",
-        "▆▇▅▃",
-        "▇▆▄▂",
-        "▆▅▃▁",
-    ];
-    if paused {
-        "▁▁▁▁".to_string()
-    } else {
-        FRAMES[phase() % FRAMES.len()].to_string()
+const LEVELS: [&str; 9] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "█"];
+
+fn level_glyph(value: f32) -> &'static str {
+    LEVELS[((value.clamp(0.0, 1.0) * 8.0).round() as usize).min(8)]
+}
+
+/// A compact 10-cell wave sampled from the real spectrum. Falls back to a
+/// smooth bass/mid/treble curve when cava is unavailable, so the meter still
+/// breathes with the music on platforms without cava.
+fn vibe_wave(paused: bool) -> String {
+    const CELLS: usize = 10;
+    if paused || !motion() {
+        return "▁".repeat(CELLS);
     }
+    let raw = UI_WAVE.lock().map(|wave| wave.clone()).unwrap_or_default();
+    let mut points = Vec::with_capacity(CELLS);
+    if raw.len() >= CELLS {
+        for index in 0..CELLS {
+            let from = index * raw.len() / CELLS;
+            let to = ((index + 1) * raw.len() / CELLS)
+                .max(from + 1)
+                .min(raw.len());
+            let slice = &raw[from..to];
+            points.push(slice.iter().sum::<f32>() / slice.len() as f32);
+        }
+    } else {
+        let (b, m, t) = (bass(), mid(), treble());
+        let curve = [
+            b,
+            b * 0.9,
+            (b + m) * 0.5,
+            m * 1.1,
+            m,
+            (m + t) * 0.5,
+            t * 1.1,
+            t,
+            b * 0.6,
+            m * 0.6,
+        ];
+        points.extend(curve);
+    }
+    let boost = 1.7 + energy() * 2.0;
+    points
+        .iter()
+        .map(|value| level_glyph((value * boost).min(1.0)))
+        .collect()
+}
+
+/// Four-band meter driven by the actual spectrum, not a looping animation.
+/// Silent or paused playback rests on a flat line.
+fn eq_bars(paused: bool) -> String {
+    if paused || !motion() {
+        return "▁▁▁▁".to_string();
+    }
+    let scale = 1.4 + energy() * 2.2;
+    let bands = [bass(), (bass() + mid()) * 0.5, mid(), treble()];
+    bands
+        .iter()
+        .map(|value| level_glyph((value * scale).min(1.0)))
+        .collect()
 }
 
 /// Elapsed / total plus a live remaining countdown.
@@ -138,7 +236,36 @@ fn timeline_label(position: f64, duration: f64) -> String {
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     UI_PHASE.store(app.phase(), Ordering::Relaxed);
-    UI_PULSE.store(app.track_pulse().to_bits(), Ordering::Relaxed);
+    UI_PULSE.store(
+        if app.config.motion {
+            app.track_pulse().to_bits()
+        } else {
+            0.0f32.to_bits()
+        },
+        Ordering::Relaxed,
+    );
+    UI_ENERGY.store(app.energy().to_bits(), Ordering::Relaxed);
+    UI_BASS.store(app.bass().to_bits(), Ordering::Relaxed);
+    UI_MID.store(app.mid().to_bits(), Ordering::Relaxed);
+    UI_TREBLE.store(app.treble().to_bits(), Ordering::Relaxed);
+    UI_MOTION.store(app.config.motion, Ordering::Relaxed);
+    let paused = app
+        .audio
+        .as_ref()
+        .map(|audio| audio.snapshot().paused)
+        .unwrap_or(true);
+    let wave = app
+        .cava
+        .as_ref()
+        .filter(|_| !paused)
+        .map(|cava| cava.values())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value as f32)
+        .collect::<Vec<f32>>();
+    if let Ok(mut slot) = UI_WAVE.lock() {
+        *slot = wave;
+    }
     app.hits.clear();
     let area = frame.area();
     frame.render_widget(
@@ -261,7 +388,7 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(glow(th().accent, th().accent2, 0.25 + 0.5 * pulse())))
+        .border_style(Style::default().fg(beat_glow(th().accent, th().accent2, 0.2, 0.6)))
         .title(Line::from(vec![
             Span::styled(
                 " now playing ",
@@ -315,11 +442,7 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
         let art_block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(glow(
-                th().border,
-                th().accent,
-                0.15 + 0.55 * pulse(),
-            )))
+            .border_style(Style::default().fg(beat_glow(th().border, th().accent, 0.12, 0.7)))
             .style(Style::default().bg(theme::panel()));
         let art_inner = art_block.inner(art_area);
         frame.render_widget(art_block, art_area);
@@ -515,7 +638,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let mut logo_spans = vec![Span::styled(
         " ▰ ",
         Style::default()
-            .fg(glow(th().accent, th().accent2, pulse()))
+            .fg(beat_glow(th().accent, th().accent2, 0.15, 0.55))
             .add_modifier(Modifier::BOLD),
     )];
     logo_spans.extend(animated_gradient(
@@ -526,7 +649,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     ));
     if playing {
         logo_spans.push(Span::styled(
-            format!("  {} ", eq_bars(paused)),
+            format!("  {} ", vibe_wave(paused)),
             Style::default()
                 .fg(if paused { th().yellow } else { th().green })
                 .add_modifier(Modifier::BOLD),
@@ -783,6 +906,21 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
 /// Peak-hold caps for the spectrum. Static state is fine: cava is drawn from
 /// one thread and resets when the panel width changes.
 static CAVA_PEAKS: std::sync::Mutex<Vec<f64>> = std::sync::Mutex::new(Vec::new());
+/// Last frame used when motion is off (or playback is paused), so the
+/// visualiser freezes instead of lying about what is playing.
+static CAVA_FROZEN: std::sync::Mutex<(Vec<f64>, Vec<f64>)> =
+    std::sync::Mutex::new((Vec::new(), Vec::new()));
+
+fn frequency_colour(position: f32, lift: f32) -> Color {
+    let base = if position < 0.34 {
+        th().green
+    } else if position < 0.7 {
+        th().accent2
+    } else {
+        th().accent
+    };
+    glow(base, th().fg, lift)
+}
 
 fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
     if area.height < 3 || area.width < 6 {
@@ -793,7 +931,10 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
         .title(Span::styled(
-            " ♪ spectrum ",
+            format!(
+                " {} spectrum ",
+                eq_bars(app.now_playing.is_none() || app.audio_snapshot().paused)
+            ),
             Style::default().fg(th().accent2),
         ))
         .style(Style::default().bg(theme::panel()));
@@ -877,15 +1018,37 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
         let index = col * values.len() / width.max(1);
         levels.push(values.get(index).copied().unwrap_or(0.0).clamp(0.0, 1.25));
     }
-    let mut peaks = CAVA_PEAKS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if peaks.len() != width {
-        peaks.resize(width, 0.0);
-    }
-    for (peak, level) in peaks.iter_mut().zip(levels.iter()) {
-        *peak = (*peak - 0.018).max(*level);
-    }
+    let paused = app.audio_snapshot().paused;
+    let (levels, peak_line) = if motion() && !paused {
+        let mut peaks = CAVA_PEAKS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if peaks.len() != width {
+            peaks.resize(width, 0.0);
+        }
+        for (peak, level) in peaks.iter_mut().zip(levels.iter()) {
+            // Fast rise, slow fall: looks like a real analyser.
+            if *level > *peak {
+                *peak = *level;
+            } else {
+                *peak = (*peak - 0.012 * (1.0 + energy() as f64)).max(*level);
+            }
+        }
+        let line = peaks.clone();
+        if let Ok(mut frozen) = CAVA_FROZEN.lock() {
+            *frozen = (levels.clone(), line.clone());
+        }
+        (levels, line)
+    } else {
+        let mut frozen = CAVA_FROZEN
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if frozen.0.len() != width {
+            frozen.0 = levels.clone();
+            frozen.1 = levels.clone();
+        }
+        (frozen.0.clone(), frozen.1.clone())
+    };
 
     let mut lines = Vec::new();
     for row in 0..height {
@@ -894,28 +1057,21 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
             let value = levels[col];
             let level = value * height as f64;
             let threshold = (height - row) as f64;
-            // Colour by height: bass-green at the bottom, teal mid, accent tip.
-            let vertical = if height > 1 {
-                (height - row) as f32 / height as f32
-            } else {
-                1.0
-            };
-            let tip = if vertical > 0.72 {
-                th().accent
-            } else if vertical > 0.38 {
-                th().accent2
-            } else {
-                th().green
-            };
-            let peak_level = peaks[col] * height as f64;
-            let (glyph, color) = if (level - threshold).abs() < 1.0 && level >= threshold {
-                ("▄", glow(tip, th().fg, 0.35))
+            let horizontal = col as f32 / width.max(1) as f32;
+            // Low frequencies sit green, mids teal, highs accent. The tip of
+            // each bar and its peak cap get a little brighter.
+            let at_tip = level >= threshold && level - threshold < 1.0;
+            let lift = if at_tip { 0.32 } else { 0.0 };
+            let colour = frequency_colour(horizontal, lift);
+            let peak_level = peak_line[col] * height as f64;
+            let (glyph, color) = if at_tip {
+                ("▄", glow(colour, th().fg, 0.3 + energy() * 0.2))
             } else if level >= threshold {
-                ("█", tip)
+                ("█", colour)
             } else if (peak_level - threshold).abs() < 0.6 {
-                ("▔", glow(tip, th().fg, 0.15))
+                ("▔", glow(colour, th().fg, 0.1))
             } else if level > threshold - 0.85 {
-                ("▄", th().accent2)
+                ("▄", glow(colour, th().border, 0.35))
             } else {
                 (" ", th().faint)
             };
@@ -2316,9 +2472,13 @@ fn bar_spans(width: usize, ratio: f64) -> Vec<Span<'static>> {
     let full = cells.floor() as usize;
     let partial = ((cells - full as f64) * 8.0).round() as usize;
     let denominator = width.max(1) as f32;
-    // The highlight drifts slowly so a paused bar still feels alive without
-    // distracting from the music.
-    let travel = (phase() as f32 * 0.012) % 1.0;
+    // A slow hue drift, not a chasing highlight. The remainder stays a clean
+    // dotted rule so long songs do not look like a broken slot machine.
+    let travel = if motion() {
+        (phase() as f32 * 0.005) % 1.0
+    } else {
+        0.0
+    };
 
     (0..width)
         .map(|index| {
@@ -2327,19 +2487,15 @@ fn bar_spans(width: usize, ratio: f64) -> Vec<Span<'static>> {
             if index < full {
                 Span::styled("█", Style::default().fg(colour))
             } else if index == full && partial > 0 {
-                // Bright head cell makes the play position unmistakable.
+                // The head brightens with the bass, so it pulses with the song.
                 Span::styled(
                     PARTIAL[partial.min(8)],
-                    Style::default().fg(glow(colour, th().fg, 0.55)),
+                    Style::default().fg(glow(colour, th().fg, 0.35 + bass() * 0.55)),
                 )
             } else {
                 Span::styled(
-                    if (index + phase() / 12) % 6 == 0 {
-                        "╌"
-                    } else {
-                        "░"
-                    },
-                    Style::default().fg(glow(th().border, th().accent, 0.08)),
+                    "░",
+                    Style::default().fg(glow(th().border, th().accent, 0.05)),
                 )
             }
         })
@@ -2365,14 +2521,15 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(glow(
+        .border_style(Style::default().fg(beat_glow(
             th().border,
             if snapshot.paused {
                 th().yellow
             } else {
                 th().accent
             },
-            0.18 + 0.55 * pulse(),
+            0.16,
+            if snapshot.paused { 0.0 } else { 0.75 },
         )))
         .title(Line::from(vec![
             Span::styled(" now playing ", Style::default().fg(th().dim)),
@@ -2423,22 +2580,22 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     let artist_room = if rows[0].width >= 70 { 30 } else { 0 };
     let title_room = left_width.saturating_sub(2 + artist_room).max(4);
     let shown_title = marquee(&title, title_room, 6);
-    let mut title_spans = vec![
-        Span::styled(
-            format!(" {} ", if snapshot.paused { "▮" } else { "▸" }),
-            Style::default()
-                .fg(if snapshot.paused {
-                    th().yellow
-                } else {
-                    glow(th().accent, th().accent2, pulse())
-                })
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            shown_title,
-            Style::default().fg(th().fg).add_modifier(Modifier::BOLD),
-        ),
-    ];
+    let mut title_spans = vec![Span::styled(
+        format!(" {} ", if snapshot.paused { "▮" } else { "▸" }),
+        Style::default()
+            .fg(if snapshot.paused {
+                th().yellow
+            } else {
+                beat_glow(th().accent, th().accent2, 0.1, 0.6)
+            })
+            .add_modifier(Modifier::BOLD),
+    )];
+    title_spans.extend(animated_gradient(
+        &shown_title,
+        th().fg,
+        th().accent2,
+        Modifier::BOLD,
+    ));
     if let Some(track) = app.now_playing.as_ref() {
         if track.auto_queued {
             title_spans.push(Span::styled(" ✦", Style::default().fg(th().purple)));
@@ -2608,6 +2765,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(label) = sleep_chip.as_ref() {
         chips.push((label.as_str(), th().yellow));
     }
+    if !app.config.motion {
+        chips.push(("◌ still", th().dim));
+    }
     let chip_width: usize = chips
         .iter()
         .map(|(label, _)| label.chars().count() + 2)
@@ -2765,6 +2925,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("Alt+T", "cycle colour theme (wallpaper = sample the desktop)"),
         key("Alt+W", "transparent background (let the terminal show the wallpaper)"),
         key("Alt+A", "ambient tint (accent follows the current cover)"),
+        key("Alt+M", "motion on / off (animations follow cava's energy)"),
         key("Alt+V", "full-screen now playing (big art + karaoke lyrics)"),
         key("Ctrl+P / :", "fzf command palette (every action)"),
         key("playerctl", "media keys control this player via MPRIS"),
@@ -3481,8 +3642,18 @@ fn track_line(
         Style::default().fg(th().dim)
     };
     const PLAY_FRAMES: [&str; 8] = ["▁", "▂", "▃", "▅", "▇", "▅", "▃", "▂"];
-    let marker = if playing {
-        PLAY_FRAMES[phase() % PLAY_FRAMES.len()]
+    // The bounce speeds up with the music; quiet tracks breathe slowly.
+    let marker_speed = if energy() > 0.55 {
+        1
+    } else if energy() > 0.2 {
+        2
+    } else {
+        3
+    };
+    let marker = if playing && motion() {
+        PLAY_FRAMES[(phase() / marker_speed) % PLAY_FRAMES.len()]
+    } else if playing {
+        "▸"
     } else if marked {
         "✓"
     } else if favorite {
@@ -3501,7 +3672,7 @@ fn track_line(
             .add_modifier(Modifier::BOLD)
     } else if playing {
         Style::default()
-            .fg(glow(th().green, th().accent2, pulse()))
+            .fg(beat_glow(th().green, th().accent2, 0.1, 0.7))
             .add_modifier(Modifier::BOLD)
     } else if marked {
         Style::default()

@@ -641,5 +641,32 @@ What landed differs slightly from the sketch above:
   peak caps, live footer chips (taste/radio/discord/sleep), and two new themes
   (`rose-pine`, `kanagawa`). Version bumped to 0.3.0 across Cargo, PyPI and npm.
 
+### 12.5 External-close handoff and the motion engine (2026-11-12)
+
+* **The bug:** closing the window (SIGHUP/SIGTERM/SIGINT) killed the TUI
+  process instantly. mpv had already been detached by the background daemon,
+  so audio continued — but MPRIS lived in the dead TUI process, so the desktop
+  media card vanished. `Ctrl+B` worked because it ran the handoff before
+  exiting.
+* **The fix:** install Unix handlers for SIGHUP/SIGTERM/SIGINT that only set an
+  atomic flag. The render loop notices it, runs the same path as `Ctrl+B`
+  (`spawn_background` + `audio.detach` + persist) and exits after the daemon
+  owns the player. Failed terminal writes and interrupted `poll`/`read` calls
+  are treated the same way, so a dead pty cannot skip the handoff.
+* Verified with a generated local WAV: the TUI was SIGTERMed while playing;
+  the daemon took over and MPRIS kept reporting the same title with a
+  advancing position (`3.5s → 8.5s → 11.5s`). `mfe stop` then shut it down
+  cleanly.
+* **Motion engine:** cava values are split into bass/mid/treble and smoothed
+  with fast attack / slow release. The UI reads them through atomics once per
+  frame. Used by the logo wave, player border, cover frame, progress head,
+  track marker, spectrum and footer. `motion = false` (Alt+M, `mfe motion
+  off`) zeroes the energy and freezes peaks, marquees and markers.
+* Animations are deliberately calmer: the chasing `╌` in the progress bar is
+  gone, the gradient takes ~15 s to cross the title, marquees hold for 2.3 s
+  before scrolling, and loud passages widen the shimmer instead of speeding
+  everything up.
+
+
 Recommended order: **M0 → M1 → M2** first. M1 is pure Rust and fully testable
 locally, so it can start in parallel with M0 if desired.

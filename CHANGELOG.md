@@ -21,6 +21,10 @@ Cross-platform, taste-aware and a lot prettier.
 - **`checksums.txt` + `latest.json`** release manifests, plus a verified
   download fallback in the npm launcher for missing optional packages.
 - **Two themes:** `rose-pine` and `kanagawa`.
+- **Motion engine.** Cava's spectrum is split into bass/mid/treble, smoothed
+  with a fast attack and slow release, and drives the border glow, wave meter,
+  progress head, marquee speed and track markers. `motion = false` (or `Alt+M`,
+  `mfe motion off`) freezes every frame for screen readers and calm setups.
 
 ### Changed
 
@@ -32,14 +36,19 @@ Cross-platform, taste-aware and a lot prettier.
   files and PID reuse harmless.
 - npm launcher: Alpine/musl detection, Rosetta preference, proxy-aware
   downloads and Node >= 18.
-- UI polish: drifting gradients, marquee titles, pulsing player and cover
-  frames, animated playing markers, autoplay badges, spectrum peak caps and
-  live footer chips (taste/radio/discord/sleep).
+- UI polish: audio-reactive gradients, dwell-then-scroll marquee titles,
+  bass-lit player and cover frames, a 10-cell spectrum wave, frequency-coloured
+  analyser peaks, autoplay badges and live footer chips
+  (taste/radio/discord/sleep/still).
 - CLI output now exits quietly on a closed pipe instead of panicking.
 - Version bumped to 0.3.0 across Cargo, PyPI and all npm packages.
 
 ### Fixed
 
+- Closing the terminal/window (SIGHUP/SIGTERM/SIGINT, or a failed terminal
+  write) now hands mpv and MPRIS to the background daemon exactly like
+  `Ctrl+B`. Playback keeps going and the desktop keeps showing the track
+  instead of losing its media card.
 - CLI config commands (`mfe discord`, `mfe theme`) now create the config
   directory on a fresh machine instead of silently doing nothing.
 - Alt+V (full-screen now-playing) was unreachable and is now wired up.

@@ -61,9 +61,9 @@ This is **MFE Player** — **M**usic **F**or **E**veryone. It's MIT-licensed, it
 | **Taste autoplay** | When the queue ends, a local model continues with the same vibe — learned from plays, skips and tags. Occasional probes test whether your taste moved. `mfe taste` explains every pick. |
 | **MPRIS / media keys** | Works with `playerctl`, keyboard media keys and desktop widgets — even while detached. |
 | **Album art in the terminal** | Cover art renders as truecolor half-blocks in the inspector — no sixel or Kitty protocol required. |
-| **Cava visualiser** | `Ctrl+V` toggles a smoothed spectrum panel that dances to the actual audio. |
+| **Cava visualiser** | `Ctrl+V` toggles a smoothed spectrum panel with fast-rise peak caps, coloured by frequency. The same energy drives every animation. |
 | **14 themes** | `Alt+T` cycles live, and **preserves the comments in your config file** instead of nuking them. |
-| **Looks like a modern TUI** | Drifting truecolor gradients, a pulsing now-playing frame, sub-cell progress with a glowing head, marquee titles, animated spectrum peaks and live status chips. |
+| **Looks like a modern TUI** | Motion driven by the actual audio: bass-reactive borders, a 10-band wave meter, drifting gradients, dwell-then-scroll titles, spectrum peak caps and live status chips. `Alt+M` freezes it. |
 | **Blends with your wallpaper** | `Alt+W` stops painting the background, so your terminal's own transparency shows the wallpaper through the app. Panels stay solid, so text stays readable. |
 | **Wallpaper palette** | `theme = "wallpaper"` (or `mfe theme adopt`) samples the wallpaper your compositor is using — swww, hyprpaper, GNOME, Plasma, macOS or Windows — and builds a matching dark palette from it. |
 | **Discord Rich Presence** | Optional: friends see the track, artist and progress over Discord’s local socket. No token, no server, no history leaves the machine. |
@@ -164,6 +164,7 @@ mfe doctor              # why is the audio not playing?
 mfe theme adopt         # derive the UI colours from your wallpaper
 mfe taste               # what autoplay has learned about your taste
 mfe discord status      # Discord presence state (on|off|client <id>)
+mfe motion on|off       # reactive animations on/off (Alt+M in the app)
 mfe cache               # artwork size + LRU limit
 mfe update              # grab the latest release (--check to only look)
 ```
@@ -210,7 +211,8 @@ Press `?` inside the app for the full, searchable map. The ones you'll actually 
 | `E` · `Alt+N` | EQ presets · loudness normalisation |
 | `Alt+T` | Cycle themes (`wallpaper` samples your desktop) |
 | `Alt+W` | Transparent background |
-| `Ctrl+B` | Detach and keep playing |
+| `Alt+M` | Motion on/off — every animation follows cava's energy |
+| `Ctrl+B` | Detach and keep playing (closing the window does this automatically) |
 | `Ctrl+P` or `:` | Command palette — every action, fuzzy-searchable |
 | `q` | Quit and stop |
 

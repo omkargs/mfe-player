@@ -272,6 +272,9 @@ pub struct AppConfig {
     pub wallpaper: String,
     /// Shift the accent colours to the dominant colour of the current cover.
     pub ambient_art: bool,
+    /// Animate the interface. Off keeps every frame static for calm setups,
+    /// screen readers and remote shells.
+    pub motion: bool,
     /// Glyph set: nerd (default), ascii, or auto.
     pub icons: String,
     /// Desktop notification on track change.
@@ -326,6 +329,7 @@ impl Default for AppConfig {
             transparent: true,
             wallpaper: String::new(),
             ambient_art: false,
+            motion: true,
             icons: "nerd".to_string(),
             notifications: false,
             autoplay: "taste".to_string(),
@@ -424,6 +428,11 @@ wallpaper = ""
 # Ambient tint: pull a vivid accent from the current album cover and let the
 # theme follow the music. Grey covers are ignored. Toggle with Alt+A.
 ambient_art = false
+
+# Motion: gradients, marquees and borders react to cava's energy. Turn off for
+# a completely still interface (screen readers, remote shells, calm setups).
+# Toggle with Alt+M.
+motion = true
 
 # Glyphs: nerd (default), ascii (plain TTYs/screen readers), or auto.
 icons = "nerd"

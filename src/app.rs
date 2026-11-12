@@ -328,6 +328,7 @@ pub enum PaletteAction {
     CycleTheme,
     ToggleTransparency,
     ToggleAmbientArt,
+    ToggleMotion,
     ToggleNotifications,
     SmartRecentlyAdded,
     SmartNeverPlayed,
@@ -622,6 +623,11 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         action: PaletteAction::ToggleAmbientArt,
     },
     PaletteItem {
+        label: "Toggle motion / reactive animations",
+        hint: "Alt+M",
+        action: PaletteAction::ToggleMotion,
+    },
+    PaletteItem {
         label: "Toggle desktop notifications",
         hint: "config",
         action: PaletteAction::ToggleNotifications,
@@ -846,6 +852,13 @@ pub struct App {
     pub artwork_track_id: Option<String>,
     artwork_url: Option<String>,
     pub spinner: usize,
+    /// Smoothed overall loudness from cava (0..1). Drives every reactive
+    /// animation, so motion follows the music instead of a fixed clock.
+    energy: f32,
+    /// Low / mid / high band levels, already smoothed.
+    bass: f32,
+    mid: f32,
+    treble: f32,
     /// Frames left in the "new track" flourish. Used by the UI to pulse the
     /// player border and title, then fades out on its own.
     track_flash: u8,
@@ -1099,6 +1112,10 @@ impl App {
             artwork_track_id: None,
             artwork_url: None,
             spinner: 0,
+            energy: 0.0,
+            bass: 0.0,
+            mid: 0.0,
+            treble: 0.0,
             track_flash: 0,
             seen_track: None,
             scrobbler: Scrobbler::new(listenbrainz_token),
@@ -1145,6 +1162,7 @@ impl App {
 
     pub fn tick(&mut self) {
         self.spinner = self.spinner.wrapping_add(1);
+        self.update_energy();
 
         // A track change gets a short accent flourish instead of appearing
         // silently. Comparing ids also ignores metadata updates for the same
@@ -1363,7 +1381,7 @@ impl App {
             KeyCode::Char('b') => self.previous_track(),
             KeyCode::Char('+') | KeyCode::Char('=') => self.change_volume(self.config.volume_step),
             KeyCode::Char('-') | KeyCode::Char('_') => self.change_volume(-self.config.volume_step),
-            KeyCode::Char('m') => self.toggle_mute(),
+            KeyCode::Char('m') if !key.modifiers.contains(KeyModifiers::ALT) => self.toggle_mute(),
             KeyCode::Char('[') => self.change_speed(-0.1),
             KeyCode::Char(']') => self.change_speed(0.1),
             KeyCode::Char('\\') => self.reset_speed(),
@@ -1402,6 +1420,7 @@ impl App {
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.toggle_ambient_art()
             }
+            KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::ALT) => self.toggle_motion(),
             KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.seek(-self.config.long_seek_step)
             }
@@ -3470,6 +3489,22 @@ impl App {
         });
     }
 
+    fn toggle_motion(&mut self) {
+        self.config.motion = !self.config.motion;
+        config::set_line("motion", if self.config.motion { "true" } else { "false" });
+        if !self.config.motion {
+            self.energy = 0.0;
+            self.bass = 0.0;
+            self.mid = 0.0;
+            self.treble = 0.0;
+        }
+        self.flash(if self.config.motion {
+            "motion on · the interface follows the music"
+        } else {
+            "motion off · static frames"
+        });
+    }
+
     fn toggle_ambient_art(&mut self) {
         self.config.ambient_art = !self.config.ambient_art;
         config::set_line(
@@ -5534,6 +5569,7 @@ impl App {
             PaletteAction::CycleTheme => self.cycle_theme(),
             PaletteAction::ToggleTransparency => self.toggle_transparency(),
             PaletteAction::ToggleAmbientArt => self.toggle_ambient_art(),
+            PaletteAction::ToggleMotion => self.toggle_motion(),
             PaletteAction::ToggleNotifications => self.toggle_notifications(),
             PaletteAction::SmartRecentlyAdded => {
                 self.play_smart(SmartRule::RecentlyAdded, "recently added")
@@ -5722,6 +5758,26 @@ impl App {
         } else {
             self.flash("audio engine is not running");
         }
+    }
+
+    /// The terminal went away (window closed, SIGHUP/SIGTERM, failed write).
+    /// Do exactly what Ctrl+B does: hand mpv + MPRIS to the daemon so the
+    /// desktop keeps showing what is playing. If the daemon cannot start, at
+    /// least detach mpv so the song does not stop mid-way.
+    pub fn handoff_for_external_close(&mut self) {
+        if self.audio.is_none() || self.detached_on_quit {
+            self.should_quit = true;
+            return;
+        }
+        // If the daemon cannot start, detaching mpv still keeps the song
+        // alive; losing MPRIS is worse than losing neither.
+        let _ = crate::daemon::spawn_background();
+        if let Some(audio) = self.audio.as_mut() {
+            audio.detach();
+        }
+        self.detached_on_quit = true;
+        self.should_quit = true;
+        self.persist();
     }
 
     /// Called by the headless daemon once it has attached to mpv: if the last
@@ -6173,6 +6229,88 @@ impl App {
             .as_ref()
             .map(AudioEngine::snapshot)
             .unwrap_or_default()
+    }
+
+    /// Pull the loudest bands out of cava and smooth them with a fast attack
+    /// and a slow release. Silence decays gracefully instead of snapping to
+    /// zero, which is what made the old animations feel twitchy.
+    fn update_energy(&mut self) {
+        let paused = self
+            .audio
+            .as_ref()
+            .map(|audio| audio.snapshot().paused)
+            .unwrap_or(true);
+        let values = match self.cava.as_ref() {
+            Some(cava) if !paused => cava.values(),
+            _ => Vec::new(),
+        };
+        if values.is_empty() {
+            let release = 0.10;
+            self.energy += (0.0 - self.energy) * release;
+            self.bass += (0.0 - self.bass) * release;
+            self.mid += (0.0 - self.mid) * release;
+            self.treble += (0.0 - self.treble) * release;
+            return;
+        }
+        let band = |from: f32, to: f32| -> f32 {
+            let len = values.len();
+            let start = ((from * len as f32) as usize).min(len.saturating_sub(1));
+            let end = (((to * len as f32) as usize).max(start + 1)).min(len);
+            let slice = &values[start..end];
+            if slice.is_empty() {
+                return 0.0;
+            }
+            (slice.iter().sum::<f64>() / slice.len() as f64) as f32
+        };
+        let bass = band(0.0, 0.28);
+        let mid = band(0.28, 0.66);
+        let treble = band(0.66, 1.0);
+        let overall = (bass * 0.5 + mid * 0.32 + treble * 0.18).clamp(0.0, 1.0);
+        // Attack when the music gets louder, release slowly when it drops.
+        let follow = |current: f32, target: f32| {
+            let rate = if target > current { 0.45 } else { 0.07 };
+            current + (target - current) * rate
+        };
+        self.energy = follow(self.energy, overall);
+        self.bass = follow(self.bass, bass);
+        self.mid = follow(self.mid, mid);
+        self.treble = follow(self.treble, treble);
+    }
+
+    /// Overall musical energy (0..1), smoothed.
+    pub fn energy(&self) -> f32 {
+        if self.config.motion {
+            self.energy
+        } else {
+            0.0
+        }
+    }
+
+    /// Low band (kick/bass) level, smoothed.
+    pub fn bass(&self) -> f32 {
+        if self.config.motion {
+            self.bass
+        } else {
+            0.0
+        }
+    }
+
+    /// Mid band level, smoothed.
+    pub fn mid(&self) -> f32 {
+        if self.config.motion {
+            self.mid
+        } else {
+            0.0
+        }
+    }
+
+    /// High band level, smoothed.
+    pub fn treble(&self) -> f32 {
+        if self.config.motion {
+            self.treble
+        } else {
+            0.0
+        }
     }
 
     /// True when this process actually owns a Discord connection.

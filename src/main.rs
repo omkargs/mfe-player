@@ -27,6 +27,42 @@ use std::panic;
 use std::time::Duration;
 
 use anyhow::Result;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Set from a signal handler when the window/terminal is closed externally.
+/// The TUI must not die here: mpv and MPRIS would disappear while the detached
+/// audio keeps playing. Instead the loop hands both to the background daemon.
+#[cfg(unix)]
+static EXTERNAL_CLOSE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn on_external_close(_: libc::c_int) {
+    EXTERNAL_CLOSE.store(true, Ordering::SeqCst);
+}
+
+#[cfg(unix)]
+fn install_external_close_handlers() {
+    unsafe {
+        for signal in [libc::SIGHUP, libc::SIGTERM, libc::SIGINT] {
+            libc::signal(signal, on_external_close as *const () as libc::sighandler_t);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn install_external_close_handlers() {}
+
+fn external_close_requested() -> bool {
+    #[cfg(unix)]
+    {
+        EXTERNAL_CLOSE.load(Ordering::SeqCst)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -245,6 +281,33 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
+        Some("motion") => {
+            let (app_config, _) = config::load_config();
+            match raw_args.get(1).map(String::as_str).unwrap_or("status") {
+                "on" | "enable" => {
+                    config::set_line("motion", "true");
+                    println!("motion on · gradients, marquees and borders follow cava");
+                }
+                "off" | "disable" => {
+                    config::set_line("motion", "false");
+                    println!("motion off · static frames (relaunch the TUI to apply)");
+                }
+                "status" => {
+                    println!("interface motion");
+                    println!(
+                        "  motion    {}",
+                        if app_config.motion { "on" } else { "off" }
+                    );
+                    println!("  source    cava energy (bass / mid / treble)");
+                    println!("  toggle    Alt+M in the TUI");
+                }
+                other => {
+                    eprintln!("usage: mfe motion [on|off|status]");
+                    eprintln!("unknown action: {other}");
+                }
+            }
+            return Ok(());
+        }
         Some("taste") => {
             let (mut taste, warning) = taste::Taste::load();
             if let Some(warning) = warning {
@@ -376,11 +439,12 @@ fn completions(shell: &str) -> String {
     match shell {
         "fish" => {
             r#"# mfe-player fish completions
-complete -c mfe -f -a "status current share theme taste discord doctor cache update toggle stop completions" -d "MFE Player"
+complete -c mfe -f -a "status current share theme taste discord motion doctor cache update toggle stop completions" -d "MFE Player"
 complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
 complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish powershell"
 complete -c mfe -n "__fish_seen_subcommand_from taste" -a "status explain reset like dislike" -d "Taste profile"
 complete -c mfe -n "__fish_seen_subcommand_from discord" -a "on off status client asset" -d "Discord presence"
+complete -c mfe -n "__fish_seen_subcommand_from motion" -a "on off status" -d "Interface motion"
 "#
         }
         "zsh" => {
@@ -393,6 +457,7 @@ _mfe() {
     'share:copy now playing to the clipboard'
     'taste:show or reset what autoplay has learned'
     'discord:configure Discord Rich Presence'
+    'motion:toggle reactive interface motion'
     'theme:show or adopt a colour theme'
     'doctor:check mpv, plugins, config and clipboard'
     'cache:show or clear the artwork cache'
@@ -417,6 +482,8 @@ _mfe() {
         _values 'action' status explain reset like dislike
       elif [[ $words[2] == discord ]]; then
         _values 'action' on off status client asset
+      elif [[ $words[2] == motion ]]; then
+        _values 'action' on off status
       fi
       ;;
   esac
@@ -428,7 +495,7 @@ _mfe "$@"
             r#"# mfe-player PowerShell completions
 Register-ArgumentCompleter -Native -CommandName mfe,mfe-player -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
-    $commands = @('status','current','share','theme','taste','discord','doctor','cache','update','toggle','stop','completions')
+    $commands = @('status','current','share','theme','taste','discord','motion','doctor','cache','update','toggle','stop','completions')
     $words = $commandAst.CommandElements | ForEach-Object { $_.ToString() }
     if ($words.Count -le 2) {
         $commands | Where-Object { $_ -like "$wordToComplete*" } |
@@ -438,6 +505,9 @@ Register-ArgumentCompleter -Native -CommandName mfe,mfe-player -ScriptBlock {
             ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
     } elseif ($words[1] -eq 'discord') {
         @('on','off','status','client','asset') | Where-Object { $_ -like "$wordToComplete*" } |
+            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    } elseif ($words[1] -eq 'motion') {
+        @('on','off','status') | Where-Object { $_ -like "$wordToComplete*" } |
             ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
     } elseif ($words[1] -eq 'taste') {
         @('status','explain','reset','like','dislike') | Where-Object { $_ -like "$wordToComplete*" } |
@@ -454,7 +524,7 @@ _mfe_player() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "status current share theme taste discord doctor cache update toggle stop completions" -- "$cur") )
+    COMPREPLY=( $(compgen -W "status current share theme taste discord motion doctor cache update toggle stop completions" -- "$cur") )
   elif [ "$prev" = "completions" ]; then
     COMPREPLY=( $(compgen -W "bash zsh fish powershell" -- "$cur") )
   elif [ "$prev" = "theme" ]; then
@@ -463,6 +533,8 @@ _mfe_player() {
     COMPREPLY=( $(compgen -W "status explain reset like dislike" -- "$cur") )
   elif [ "$prev" = "discord" ]; then
     COMPREPLY=( $(compgen -W "on off status client asset" -- "$cur") )
+  elif [ "$prev" = "motion" ]; then
+    COMPREPLY=( $(compgen -W "on off status" -- "$cur") )
   elif [ "$prev" = "cache" ]; then
     COMPREPLY=( $(compgen -W "clean" -- "$cur") )
   elif [ "$prev" = "update" ]; then
@@ -507,6 +579,7 @@ fn cli_action() -> CliAction {
                mfe-player discord         Discord Rich Presence status\n\
                mfe-player discord on|off  enable or disable presence\n\
                mfe-player discord client <id>   set the Discord application id\n\
+               mfe-player motion          animation status (on|off)\n\
                mfe-player toggle          play/pause the background player\n\
                mfe-player stop            stop playback and the daemon\n\
                mfe-player completions bash|zsh|fish|powershell\n\n\
@@ -559,27 +632,66 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse: bo
 }
 
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) -> Result<()> {
+    install_external_close_handlers();
     let mut title = String::new();
     while !app.should_quit {
         app.tick();
-        terminal.draw(|frame| ui::draw(frame, app))?;
+        if external_close_requested() {
+            app.handoff_for_external_close();
+            break;
+        }
+        if let Err(err) = terminal.draw(|frame| ui::draw(frame, app)) {
+            // A closed terminal makes every later write fail. Keep the music
+            // (and its MPRIS card) alive by handing it to the daemon instead
+            // of dying with the window.
+            app.handoff_for_external_close();
+            if !app.detached_on_quit {
+                return Err(err.into());
+            }
+            break;
+        }
 
         let wanted = app.terminal_title();
         if wanted != title {
-            execute!(terminal.backend_mut(), SetTitle(&wanted))?;
+            if execute!(terminal.backend_mut(), SetTitle(&wanted)).is_err() {
+                app.handoff_for_external_close();
+                break;
+            }
             title = wanted;
         }
 
-        if event::poll(Duration::from_millis(50))? {
-            match event::read()? {
-                Event::Key(key)
+        if external_close_requested() {
+            app.handoff_for_external_close();
+            break;
+        }
+
+        // `poll`/`read` can fail with EINTR when a signal arrives mid-wait.
+        // That is not an error: the flag above is the real message.
+        match event::poll(Duration::from_millis(50)) {
+            Ok(false) => {}
+            Ok(true) => match event::read() {
+                Ok(Event::Key(key))
                     if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
                     app.handle_key(key);
                 }
-                Event::Mouse(mouse) => app.handle_mouse(mouse),
-                Event::Resize(_, _) => {}
-                _ => {}
+                Ok(Event::Mouse(mouse)) => app.handle_mouse(mouse),
+                Ok(Event::Resize(_, _)) => {}
+                Ok(_) => {}
+                Err(err) => {
+                    if external_close_requested() {
+                        app.handoff_for_external_close();
+                        break;
+                    }
+                    return Err(err.into());
+                }
+            },
+            Err(err) => {
+                if external_close_requested() {
+                    app.handoff_for_external_close();
+                    break;
+                }
+                return Err(err.into());
             }
         }
     }

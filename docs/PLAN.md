@@ -666,6 +666,10 @@ What landed differs slightly from the sketch above:
   gone, the gradient takes ~15 s to cross the title, marquees hold for 2.3 s
   before scrolling, and loud passages widen the shimmer instead of speeding
   everything up.
+* Still open: Windows console-close (`CTRL_CLOSE_EVENT`) needs a control
+  handler that can block long enough for the daemon handoff. It was not added
+  blind because it cannot be compiled or tested locally; M4 is the natural
+  place to do it, together with SMTC.
 
 
 Recommended order: **M0 → M1 → M2** first. M1 is pure Rust and fully testable

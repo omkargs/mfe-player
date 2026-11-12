@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.3.0 — 2026-11-12
+
+Cross-platform, taste-aware and a lot prettier.
+
+### Added
+
+- **Taste autoplay.** When the queue ends with repeat off, a local model keeps
+  the same vibe going using tags, artists, plays, skips and completion rates.
+  Two profiles (30-day long-term, 90-minute session), MMR diversity and a
+  guarded out-of-profile probe. `mfe taste [status|explain|reset|like|dislike]`
+  shows and edits what it learned. Everything stays in `taste.json`.
+- **Discord Rich Presence.** Opt-in local IPC presence with title, artist,
+  album, progress, play/pause art and project buttons. `mfe discord
+  on|off|status|client <id>|asset <key>`. No token, server or history leaves
+  the machine; paused tracks are hidden by default.
+- **Windows ARM64 package** and a PowerShell installer (`install.ps1`) that
+  verifies checksums, updates the user PATH, offers winget dependency installs
+  and registers completions.
+- **`checksums.txt` + `latest.json`** release manifests, plus a verified
+  download fallback in the npm launcher for missing optional packages.
+- **Two themes:** `rose-pine` and `kanagawa`.
+
+### Changed
+
+- Platform layer (`src/platform/`) with MPRIS on Linux and inert media stubs
+  elsewhere; `mpris-server` and `libc` are now platform-scoped dependencies.
+- Windows: named-pipe mpv probing, `CREATE_NO_WINDOW` spawning, Python plugin
+  launch and platform-aware doctor output.
+- Daemon: graceful stop via a marker file and a heartbeat that makes stale pid
+  files and PID reuse harmless.
+- npm launcher: Alpine/musl detection, Rosetta preference, proxy-aware
+  downloads and Node >= 18.
+- UI polish: drifting gradients, marquee titles, pulsing player and cover
+  frames, animated playing markers, autoplay badges, spectrum peak caps and
+  live footer chips (taste/radio/discord/sleep).
+- CLI output now exits quietly on a closed pipe instead of panicking.
+- Version bumped to 0.3.0 across Cargo, PyPI and all npm packages.
+
+### Fixed
+
+- CLI config commands (`mfe discord`, `mfe theme`) now create the config
+  directory on a fresh machine instead of silently doing nothing.
+- Alt+V (full-screen now-playing) was unreachable and is now wired up.
+- Atomic state/config/taste writes on Windows via `replace_file`.
+
 ## Unreleased
 
 ### Added

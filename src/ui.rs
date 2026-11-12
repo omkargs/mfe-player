@@ -66,35 +66,26 @@ fn glow(base: Color, accent: Color, amount: f32) -> Color {
     mix(base, accent, amount.clamp(0.0, 1.0))
 }
 
-/// Bass-reactive glow: quiet passages stay calm, loud ones breathe.
-fn beat_glow(base: Color, accent: Color, floor: f32, depth: f32) -> Color {
-    glow(base, accent, floor + depth * bass() + 0.25 * pulse())
+/// A soft glow that breathes with the bass: the base colour lightened towards
+/// the panel foreground, never a hue shift, so glow reads as brightness.
+fn beat_glow(base: Color, floor: f32, depth: f32) -> Color {
+    glow(
+        base,
+        th().fg,
+        (floor + depth * bass() + 0.25 * pulse()).min(0.85),
+    )
 }
 
-/// Animated gradient with a soft highlight that takes about fifteen seconds to
-/// cross the text. Loud music widens the shimmer; motion off freezes it.
+/// A static left-to-right fade of the text colours: no travel, so the title
+/// stays calm and readable instead of shimmering in the corner of your eye.
 fn animated_gradient(text: &str, from: Color, to: Color, modifier: Modifier) -> Vec<Span<'static>> {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len().max(1) as f32;
-    let shimmer = if motion() {
-        0.18 + energy() * 0.32
-    } else {
-        0.0
-    };
-    let travel = if motion() {
-        (phase() as f32 * 0.009) % 1.0
-    } else {
-        0.0
-    };
     chars
         .iter()
         .enumerate()
         .map(|(index, ch)| {
-            let base = index as f32 / len;
-            let distance = (base - travel + 1.0) % 1.0;
-            // Bell-shaped wave, never fully dark, so shortcuts stay legible.
-            let wave = 1.0 - (distance * 2.0 - 1.0).abs();
-            let t = (base * (1.0 - shimmer) + wave * shimmer).clamp(0.0, 1.0);
+            let t = index as f32 / len;
             Span::styled(
                 ch.to_string(),
                 Style::default().fg(mix(from, to, t)).add_modifier(modifier),
@@ -103,22 +94,17 @@ fn animated_gradient(text: &str, from: Color, to: Color, modifier: Modifier) -> 
         .collect()
 }
 
-/// A one-cell-tall rule whose hue drifts slowly, used under the header.
+/// A rule under the header fading from accent to the panel border, lifted by
+/// the music but never travelling.
 fn gradient_rule(width: usize) -> Line<'static> {
-    let travel = if motion() {
-        (phase() as f32 * 0.006) % 1.0
-    } else {
-        0.0
-    };
-    let lift = 0.15 + energy() * 0.35;
+    let lift = 0.2 + energy() * 0.3;
     let spans: Vec<Span<'static>> = (0..width)
         .map(|index| {
             let base = index as f32 / width.max(1) as f32;
-            let t = (base + travel) % 1.0;
-            let colour = if t < 0.5 {
-                mix(th().accent, th().accent2, (t * 2.0).min(lift * 2.0))
+            let colour = if base < 0.5 {
+                mix(th().accent, th().accent2, (base * 2.0).min(lift * 2.0))
             } else {
-                mix(th().accent2, th().border, (t - 0.5) * 2.0)
+                mix(th().accent2, th().border, (base - 0.5) * 2.0)
             };
             Span::styled("─", Style::default().fg(colour))
         })
@@ -388,7 +374,7 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(beat_glow(th().accent, th().accent2, 0.2, 0.6)))
+        .border_style(Style::default().fg(beat_glow(th().accent, 0.2, 0.4)))
         .title(Line::from(vec![
             Span::styled(
                 " now playing ",
@@ -442,7 +428,7 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
         let art_block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(beat_glow(th().border, th().accent, 0.12, 0.7)))
+            .border_style(Style::default().fg(beat_glow(th().border, 0.12, 0.55)))
             .style(Style::default().bg(theme::panel()));
         let art_inner = art_block.inner(art_area);
         frame.render_widget(art_block, art_area);
@@ -638,7 +624,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let mut logo_spans = vec![Span::styled(
         " ▰ ",
         Style::default()
-            .fg(beat_glow(th().accent, th().accent2, 0.15, 0.55))
+            .fg(beat_glow(th().accent, 0.15, 0.45))
             .add_modifier(Modifier::BOLD),
     )];
     logo_spans.extend(animated_gradient(
@@ -2464,7 +2450,7 @@ fn mix(from: Color, to: Color, t: f32) -> Color {
     }
 }
 
-/// Eighth-block progress bar: smooth head, gradient fill, quiet remainder.
+/// Eighth-block progress bar: smooth head, static accent fade, quiet remainder.
 fn bar_spans(width: usize, ratio: f64) -> Vec<Span<'static>> {
     const PARTIAL: [&str; 9] = [" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
     let ratio = ratio.clamp(0.0, 1.0);
@@ -2472,25 +2458,18 @@ fn bar_spans(width: usize, ratio: f64) -> Vec<Span<'static>> {
     let full = cells.floor() as usize;
     let partial = ((cells - full as f64) * 8.0).round() as usize;
     let denominator = width.max(1) as f32;
-    // A slow hue drift, not a chasing highlight. The remainder stays a clean
-    // dotted rule so long songs do not look like a broken slot machine.
-    let travel = if motion() {
-        (phase() as f32 * 0.005) % 1.0
-    } else {
-        0.0
-    };
 
     (0..width)
         .map(|index| {
             let base = index as f32 / denominator;
-            let colour = mix(th().accent, th().accent2, (base + travel) % 1.0);
+            let colour = mix(th().accent, th().accent2, base);
             if index < full {
                 Span::styled("█", Style::default().fg(colour))
             } else if index == full && partial > 0 {
                 // The head brightens with the bass, so it pulses with the song.
                 Span::styled(
                     PARTIAL[partial.min(8)],
-                    Style::default().fg(glow(colour, th().fg, 0.35 + bass() * 0.55)),
+                    Style::default().fg(glow(colour, th().fg, 0.3 + bass() * 0.55)),
                 )
             } else {
                 Span::styled(
@@ -2521,16 +2500,12 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(beat_glow(
-            th().border,
-            if snapshot.paused {
-                th().yellow
-            } else {
-                th().accent
-            },
-            0.16,
-            if snapshot.paused { 0.0 } else { 0.75 },
-        )))
+        .border_style(Style::default().fg(if snapshot.paused {
+            // Paused holds a warm, static tint instead of breathing.
+            mix(th().border, th().yellow, 0.45)
+        } else {
+            beat_glow(th().border, 0.14, 0.5)
+        }))
         .title(Line::from(vec![
             Span::styled(" now playing ", Style::default().fg(th().dim)),
             Span::styled(
@@ -2586,7 +2561,7 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
             .fg(if snapshot.paused {
                 th().yellow
             } else {
-                beat_glow(th().accent, th().accent2, 0.1, 0.6)
+                beat_glow(th().accent, 0.1, 0.45)
             })
             .add_modifier(Modifier::BOLD),
     )];
@@ -3642,16 +3617,9 @@ fn track_line(
         Style::default().fg(th().dim)
     };
     const PLAY_FRAMES: [&str; 8] = ["▁", "▂", "▃", "▅", "▇", "▅", "▃", "▂"];
-    // The bounce speeds up with the music; quiet tracks breathe slowly.
-    let marker_speed = if energy() > 0.55 {
-        1
-    } else if energy() > 0.2 {
-        2
-    } else {
-        3
-    };
     let marker = if playing && motion() {
-        PLAY_FRAMES[(phase() / marker_speed) % PLAY_FRAMES.len()]
+        // A fixed rhythm so the bounce never stutters or jumps with volume.
+        PLAY_FRAMES[(phase() / 2) % PLAY_FRAMES.len()]
     } else if playing {
         "▸"
     } else if marked {
@@ -3672,7 +3640,7 @@ fn track_line(
             .add_modifier(Modifier::BOLD)
     } else if playing {
         Style::default()
-            .fg(beat_glow(th().green, th().accent2, 0.1, 0.7))
+            .fg(beat_glow(th().green, 0.1, 0.5))
             .add_modifier(Modifier::BOLD)
     } else if marked {
         Style::default()

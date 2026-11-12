@@ -268,6 +268,7 @@ const NON_PLAY = new Set([
   "theme",
   "taste",
   "discord",
+  "motion",
   "update",
   "cache",
   "completions",

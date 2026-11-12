@@ -20,7 +20,7 @@ use crate::models::{
     parse_lyrics, truncate, Album, Artist, LyricLine, LyricsDoc, Playlist, SearchPayload,
     SearchResults, StreamInfo, Track,
 };
-use crate::platform::media::{self as mpris, Mpris};
+use crate::platform::media::{self as media, Media};
 use crate::plugins::{run_plugin, InstalledPlugin, PluginKind, PluginRegistry};
 use crate::social::Scrobbler;
 use crate::state::{HistoryEntry, PersistedState};
@@ -799,8 +799,10 @@ pub struct App {
     pub hits: Vec<HitRegion>,
     last_click: Option<(Instant, HitAction)>,
     pub mouse_enabled: bool,
-    mpris: Option<Mpris>,
-    mpris_signature: Option<String>,
+    media: Media,
+    media_signature: Option<String>,
+    media_card_reported: bool,
+    media_probe_at: Instant,
     discord: Option<Discord>,
     discord_signature: Option<String>,
     pub open_playlist: Option<usize>,
@@ -906,7 +908,14 @@ impl App {
         let cava = (!headless && cava_enabled && cfg!(target_os = "linux"))
             .then(|| Cava::spawn(config.cava_bars));
         let downloads = load_downloads();
-        let mpris = config.mpris.then(Mpris::start);
+        // `mpris` stays as the legacy switch; `media` is the new name for
+        // "auto" (use the platform backend) or "off" (no media card at all).
+        let media_enabled = config.mpris && !config.media.eq_ignore_ascii_case("off");
+        let media = if media_enabled {
+            Media::start()
+        } else {
+            Media::off()
+        };
         // Exactly one process owns the Discord connection. When a background
         // daemon exists it is the owner; the TUI only drives presence when it
         // is the only thing playing. Otherwise both would race over one card.
@@ -1065,8 +1074,10 @@ impl App {
             hits: Vec::new(),
             last_click: None,
             mouse_enabled: cfg_mouse,
-            mpris,
-            mpris_signature: None,
+            media,
+            media_signature: None,
+            media_card_reported: false,
+            media_probe_at: Instant::now(),
             discord,
             discord_signature: None,
             open_playlist: None,
@@ -1181,7 +1192,7 @@ impl App {
             self.handle_event(event);
         }
 
-        self.poll_mpris();
+        self.poll_media();
         self.poll_discord();
         self.check_sleep_timer();
         self.maybe_prime_radio();
@@ -2250,19 +2261,27 @@ impl App {
         }
     }
 
-    fn poll_mpris(&mut self) {
-        let commands: Vec<mpris::Command> = self
-            .mpris
-            .as_ref()
-            .map(|mpris| mpris.commands.try_iter().collect())
-            .unwrap_or_default();
+    fn poll_media(&mut self) {
+        let commands = self.media.commands();
         for command in commands {
-            self.handle_mpris_command(command);
+            self.handle_media_command(command);
         }
 
-        let Some(mpris) = self.mpris.as_ref() else {
+        // The card is optional: a missing session bus, a locked-down desktop or
+        // a name already taken by another player only means no media keys.
+        if self.media.backend_name() == "off" {
             return;
-        };
+        }
+        if !self.media_card_reported && self.media_probe_at.elapsed() >= Duration::from_millis(1500)
+        {
+            self.media_card_reported = true;
+            if !self.media.is_active() {
+                if let Some(err) = self.media.error() {
+                    self.flash(format!("media card unavailable: {err}"));
+                }
+            }
+        }
+
         let snapshot = self.audio_snapshot();
         let duration = snapshot.duration.max(
             self.now_playing
@@ -2271,7 +2290,7 @@ impl App {
                 .map(|duration| duration as f64)
                 .unwrap_or(0.0),
         );
-        let update = mpris::Update {
+        let update = media::Update {
             title: self
                 .now_playing
                 .as_ref()
@@ -2321,9 +2340,9 @@ impl App {
             update.can_next,
             update.can_previous
         );
-        if self.mpris_signature.as_deref() != Some(signature.as_str()) {
-            mpris.push(update);
-            self.mpris_signature = Some(signature);
+        if self.media_signature.as_deref() != Some(signature.as_str()) {
+            self.media.push(update);
+            self.media_signature = Some(signature);
         }
     }
 
@@ -2369,9 +2388,9 @@ impl App {
         }
     }
 
-    fn handle_mpris_command(&mut self, command: mpris::Command) {
+    fn handle_media_command(&mut self, command: media::Command) {
         match command {
-            mpris::Command::Play => {
+            media::Command::Play => {
                 let idle = self.audio_snapshot().idle;
                 if idle {
                     self.resume_queue();
@@ -2380,36 +2399,36 @@ impl App {
                     self.status = "playing".to_string();
                 }
             }
-            mpris::Command::Pause => {
+            media::Command::Pause => {
                 if let Some(audio) = self.audio.as_ref() {
                     let _ = audio.set_pause(true);
                     self.status = "paused".to_string();
                 }
             }
-            mpris::Command::PlayPause => self.toggle_pause(),
-            mpris::Command::Next => self.next_track(false),
-            mpris::Command::Previous => self.previous_track(),
-            mpris::Command::Stop => {
+            media::Command::PlayPause => self.toggle_pause(),
+            media::Command::Next => self.next_track(false),
+            media::Command::Previous => self.previous_track(),
+            media::Command::Stop => {
                 if let Some(audio) = self.audio.as_ref() {
                     let _ = audio.stop();
                 }
                 self.status = "stopped".to_string();
             }
-            mpris::Command::Seek(delta) => self.seek(delta),
-            mpris::Command::SetPosition(position) => self.seek_absolute(position),
-            mpris::Command::SetVolume(volume) => {
+            media::Command::Seek(delta) => self.seek(delta),
+            media::Command::SetPosition(position) => self.seek_absolute(position),
+            media::Command::SetVolume(volume) => {
                 self.volume = volume.clamp(0.0, 130.0);
                 if self.volume > 0.0 {
                     self.last_volume = self.volume;
                 }
                 self.apply_volume();
             }
-            mpris::Command::SetShuffle(shuffle) => {
+            media::Command::SetShuffle(shuffle) => {
                 if self.shuffle != shuffle {
                     self.toggle_shuffle();
                 }
             }
-            mpris::Command::SetLoop(label) => {
+            media::Command::SetLoop(label) => {
                 self.repeat = match label.as_str() {
                     "one" => RepeatMode::One,
                     "all" => RepeatMode::All,
@@ -2418,7 +2437,7 @@ impl App {
                 self.status = self.repeat.label().to_string();
                 self.mark_dirty();
             }
-            mpris::Command::Quit => self.should_quit = true,
+            media::Command::Quit => self.should_quit = true,
         }
     }
 

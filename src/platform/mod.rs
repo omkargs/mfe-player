@@ -6,3 +6,9 @@
 
 pub mod fs_util;
 pub mod media;
+
+#[cfg(target_os = "macos")]
+pub mod macos_nowplaying;
+
+#[cfg(windows)]
+pub mod windows_smtc;

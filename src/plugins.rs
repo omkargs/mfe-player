@@ -1,6 +1,5 @@
 use std::fs;
 use std::io::Read;
-#[cfg(unix)]
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;

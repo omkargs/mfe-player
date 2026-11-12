@@ -1,48 +1,19 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
 use mpris_server::zbus;
 use mpris_server::{LoopStatus, Metadata, PlaybackStatus, Player, Time, TrackId};
 
-/// Commands arriving from MPRIS clients (media keys, `playerctl`, desktops).
-#[derive(Debug, Clone)]
-pub enum Command {
-    Play,
-    Pause,
-    PlayPause,
-    Next,
-    Previous,
-    Stop,
-    Seek(f64),
-    SetPosition(f64),
-    SetVolume(f64),
-    SetShuffle(bool),
-    SetLoop(String),
-    Quit,
-}
-
-/// Snapshot pushed from the TUI to the D-Bus thread.
-#[derive(Debug, Clone, Default)]
-pub struct Update {
-    pub title: String,
-    pub artist: String,
-    pub album: String,
-    pub art_url: Option<String>,
-    pub duration_secs: f64,
-    pub position_secs: f64,
-    pub paused: bool,
-    pub has_track: bool,
-    pub volume: f64,
-    pub can_next: bool,
-    pub can_previous: bool,
-    pub shuffle: bool,
-    pub repeat: String,
-}
+pub use crate::platform::media::{Command, Update};
 
 pub struct Mpris {
     pub commands: Receiver<Command>,
     updates: AsyncSender<Update>,
+    active: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
     _thread: thread::JoinHandle<()>,
 }
 
@@ -50,15 +21,23 @@ impl Mpris {
     pub fn start() -> Self {
         let (command_tx, command_rx) = mpsc::channel();
         let (update_tx, update_rx) = async_channel::unbounded();
+        let active = Arc::new(AtomicBool::new(false));
+        let error = Arc::new(Mutex::new(None));
 
         let thread = thread::Builder::new()
             .name("mpris".to_string())
-            .spawn(move || run_server(command_tx, update_rx))
+            .spawn({
+                let active = Arc::clone(&active);
+                let error = Arc::clone(&error);
+                move || run_server(command_tx, update_rx, active, error)
+            })
             .expect("starting MPRIS thread");
 
         Self {
             commands: command_rx,
             updates: update_tx,
+            active,
+            error,
             _thread: thread,
         }
     }
@@ -66,9 +45,24 @@ impl Mpris {
     pub fn push(&self, update: Update) {
         let _ = self.updates.try_send(update);
     }
+
+    /// True once the D-Bus name is owned, i.e. the desktop shows our card.
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::SeqCst)
+    }
+
+    /// Why the card is missing, if it is.
+    pub fn error(&self) -> Option<String> {
+        self.error.lock().ok().and_then(|guard| guard.clone())
+    }
 }
 
-fn run_server(commands: Sender<Command>, updates: AsyncReceiver<Update>) {
+fn run_server(
+    commands: Sender<Command>,
+    updates: AsyncReceiver<Update>,
+    active: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
+) {
     zbus::block_on(async move {
         let player = match Player::builder("org.mfeplayer.MfePlayer")
             .identity("Mfe Player")
@@ -86,8 +80,14 @@ fn run_server(commands: Sender<Command>, updates: AsyncReceiver<Update>) {
         {
             Ok(player) => player,
             // No session bus (headless, ssh without DBus): MPRIS is optional.
-            Err(_) => return,
+            Err(err) => {
+                if let Ok(mut guard) = error.lock() {
+                    *guard = Some(format!("mpris unavailable: {err}"));
+                }
+                return;
+            }
         };
+        active.store(true, Ordering::SeqCst);
 
         {
             let tx = commands.clone();

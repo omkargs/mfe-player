@@ -7,7 +7,9 @@
 //! prints the exact one-liner instead of guessing.
 
 use std::env;
+#[cfg(not(windows))]
 use std::fs;
+#[cfg(not(windows))]
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -110,6 +112,9 @@ pub fn run(check_only: bool) -> Result<()> {
             }
         }
     }
+    // On Windows the block above always returns, so this tail is unreachable
+    // there. Keeping it lets the non-Windows path fall through naturally.
+    #[cfg_attr(windows, allow(unreachable_code))]
     Ok(())
 }
 
@@ -141,6 +146,9 @@ fn latest_version() -> Result<String> {
     Ok(tag.trim_start_matches('v').to_string())
 }
 
+// The helpers below only serve the tarball self-updater, which is wired up
+// for unix targets; Windows prints a download link instead.
+#[cfg(not(windows))]
 fn download(url: &str, dest: &Path) -> Result<()> {
     let output = Command::new("curl")
         .args([
@@ -166,6 +174,7 @@ fn download(url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn find_binary(dir: &Path) -> Option<PathBuf> {
     let entries = fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
@@ -190,11 +199,7 @@ fn set_executable(path: &Path) -> std::io::Result<()> {
     fs::set_permissions(path, permissions)
 }
 
-#[cfg(windows)]
-fn set_executable(_path: &Path) -> std::io::Result<()> {
-    Ok(())
-}
-
+#[cfg(not(windows))]
 fn target_triple() -> Option<&'static str> {
     match (env::consts::OS, env::consts::ARCH) {
         ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
@@ -205,6 +210,7 @@ fn target_triple() -> Option<&'static str> {
     }
 }
 
+#[cfg(not(windows))]
 fn print_fallback() {
     println!("install the new version with:");
     println!("  curl -fsSL https://raw.githubusercontent.com/{REPO}/master/install.sh | bash");

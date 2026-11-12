@@ -6,7 +6,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use crate::{config, daemon, ipc, plugins, wallpaper};
+use crate::{config, daemon, ipc, platform::media, plugins, wallpaper};
 
 pub fn run() -> i32 {
     println!("mfe-player doctor");
@@ -98,9 +98,14 @@ pub fn run() -> i32 {
     } else {
         println!("  ·  mpv is not running right now (fine)");
     }
-    #[cfg(target_os = "linux")]
-    if app_config.mpris {
-        println!("  ok MPRIS enabled (Linux media keys)");
+    if !app_config.mpris || app_config.media.eq_ignore_ascii_case("off") {
+        println!("  ·  media card is off (media = \"off\")");
+    } else {
+        println!(
+            "  ok media card via {} — {}",
+            media::backend_name(),
+            media::CAPABILITIES.join(", ")
+        );
     }
 
     println!();

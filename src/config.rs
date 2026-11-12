@@ -204,6 +204,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_media() -> String {
+    "auto".to_string()
+}
+
 fn default_seek() -> f64 {
     5.0
 }
@@ -256,6 +260,9 @@ pub struct AppConfig {
     /// Custom EQ curve in dB for the ten bands (only used when eq = "custom").
     pub eq_gains: Vec<f64>,
     pub audio_device: String,
+    /// Media integration: auto (use the platform backend) or off.
+    pub media: String,
+    /// Legacy switch for the MPRIS card. `false` disables every backend.
     pub mpris: bool,
     /// Folders scanned for local audio (FLAC/MP3/Opus/...). `~` is expanded.
     pub library_paths: Vec<String>,
@@ -321,6 +328,7 @@ impl Default for AppConfig {
             eq: default_eq(),
             eq_gains: Vec::new(),
             audio_device: String::new(),
+            media: default_media(),
             mpris: default_true(),
             library_paths: Vec::new(),
             listenbrainz_token: String::new(),
@@ -396,7 +404,10 @@ eq = "flat"                # flat | bass | vocal | night | loud
 audio_device = ""          # empty = system default (e.g. "alsa/hdmi:CARD=HDMI")
 
 # Desktop media keys / playerctl integration.
-mpris = true
+# media = "auto" uses the native backend: MPRIS on Linux, SMTC on Windows,
+# Now Playing on macOS. "off" hides the media card entirely.
+media = "auto"
+mpris = true                # legacy switch; false disables every backend
 
 # Local music folders (FLAC, MP3, Opus, Ogg, M4A...). Scanned on launch.
 # Example: library_paths = ["~/Music", "/mnt/archive/albums"]

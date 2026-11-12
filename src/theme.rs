@@ -216,6 +216,38 @@ const OCEAN: Theme = Theme {
     purple: Color::Rgb(150, 170, 255),
 };
 
+const ROSE_PINE: Theme = Theme {
+    bg: Color::Rgb(25, 23, 36),
+    panel: Color::Rgb(31, 29, 46),
+    panel2: Color::Rgb(38, 35, 58),
+    border: Color::Rgb(64, 61, 82),
+    fg: Color::Rgb(224, 222, 244),
+    dim: Color::Rgb(144, 140, 170),
+    faint: Color::Rgb(110, 106, 134),
+    accent: Color::Rgb(235, 111, 146),
+    accent2: Color::Rgb(156, 207, 216),
+    green: Color::Rgb(49, 116, 143),
+    yellow: Color::Rgb(246, 193, 119),
+    red: Color::Rgb(235, 111, 146),
+    purple: Color::Rgb(196, 167, 231),
+};
+
+const KANAGAWA: Theme = Theme {
+    bg: Color::Rgb(22, 22, 29),
+    panel: Color::Rgb(31, 31, 40),
+    panel2: Color::Rgb(42, 42, 55),
+    border: Color::Rgb(84, 84, 109),
+    fg: Color::Rgb(220, 215, 186),
+    dim: Color::Rgb(114, 113, 105),
+    faint: Color::Rgb(84, 84, 109),
+    accent: Color::Rgb(126, 156, 216),
+    accent2: Color::Rgb(127, 180, 202),
+    green: Color::Rgb(152, 187, 108),
+    yellow: Color::Rgb(230, 195, 132),
+    red: Color::Rgb(232, 36, 36),
+    purple: Color::Rgb(149, 127, 184),
+};
+
 /// The terminal's own palette. Every surface is `Reset`, so it inherits
 /// whatever background and foreground the user already runs, and the accents
 /// are the 16 ANSI colours rather than fixed RGB values.
@@ -296,6 +328,8 @@ pub const THEME_NAMES: &[&str] = &[
     "solarized",
     "amber",
     "ocean",
+    "rose-pine",
+    "kanagawa",
     "auto",
     "wallpaper",
 ];
@@ -314,6 +348,8 @@ fn preset(name: &str) -> Option<Theme> {
         "solarized" | "solarized-dark" | "solar" => Some(SOLARIZED),
         "amber" | "retro" | "terminal" => Some(AMBER),
         "ocean" | "deep" | "abyss" => Some(OCEAN),
+        "rose-pine" | "rosepine" | "rosé-pine" => Some(ROSE_PINE),
+        "kanagawa" | "kanagawa-wave" | "ink" => Some(KANAGAWA),
         "auto" | "ansi" | "terminal-palette" => Some(AUTO),
         // "wallpaper" is resolved from the desktop, not from a fixed palette.
         _ => None,

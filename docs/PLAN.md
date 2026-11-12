@@ -559,10 +559,10 @@ title/artist/artwork; no crash when the API is unavailable.
 
 | Milestone | Content | Estimate | Status |
 |---|---|---|---|
-| M0 | Platform layer + green CI on 3 OS | 3–4 d | **foundation landed locally · target gating + platform layer + Windows fixes · CI matrix updated, needs a run** |
+| M0 | Platform layer + green CI on 3 OS | 3–4 d | **landed locally · platform layer, Windows fixes, graceful daemon stop + heartbeat · CI matrix updated, needs a run** |
 | M1 | Taste engine + autoplay + probes + `mfe taste` | 6–8 d | **implemented locally · 30/30 tests green · pending TUI check + commit** |
-| M2 | Discord presence | 3–5 d | blocked on owner Discord app ID/assets |
-| M3 | npm packages for all targets + Windows installer + signing decision | 5–7 d | not started |
+| M2 | Discord presence | 3–5 d | **transport + CLI + doctor landed locally · inert until a client id/assets exist** |
+| M3 | npm packages for all targets + Windows installer + signing decision | 5–7 d | **launcher fallback, win32-arm64, install.ps1, checksums/latest.json wired · signing still open** |
 | M4 | SMTC/Now Playing + notifications | 4–6 d | not started |
 | M5 | Backlog picks | ongoing | — |
 
@@ -602,8 +602,44 @@ What landed differs slightly from the sketch above:
 * Plugins run through `python` on Windows, permission bits are Unix-only, cava is
   Linux-only, and doctor reports platform-appropriate checks.
 * CI matrix now includes Windows as a supported target and runs fmt + clippy.
-* Still open for M0: a Windows daemon control channel (graceful stop without
-  `taskkill`), pid + start-time files, and an actual CI/hardware run.
+* Graceful daemon stop is now a cross-platform marker file: `mfe stop` asks the
+  daemon to save and exit, and only falls back to a signal after four seconds.
+* PID reuse is handled with a heartbeat file (`daemon.heartbeat`): a pid is only
+  considered live when the process exists *and* its heartbeat is under 15 s old.
+* Still open for M0: an actual CI/hardware run on Windows and macOS.
+
+### 12.3 M2 implementation notes (2026-11-12)
+
+* Transport is local-only: Unix `discord-ipc-0..9` (including Flatpak/Snap
+  paths) and Windows named pipes, with the 8-byte LE frame header.
+* Activity shows title / artist · album, elapsed + remaining timestamps, a
+  `mfe` large asset and play/pause small asset, type = Listening.
+* Buttons (max 2) point at the project; they can be disabled.
+* One owner: the daemon drives presence whenever it exists, otherwise the TUI.
+  Handoff is automatic because the worker disconnects when its channel drops.
+* `discord_show_paused`, `discord_show_buttons` and `discord_when_private`
+  control what is shared. Paused tracks are hidden by default.
+* `mfe discord on|off|status|client <id>|asset <key>` edits config.toml in
+  place; `mfe doctor` reports configured-but-idle state.
+* Still required from the owner: a Discord application client id and the
+  `mfe`/`play`/`pause` asset uploads. Without them presence stays inert by
+  design (no default id is baked in).
+
+### 12.4 M3 and polish notes (2026-11-12)
+
+* Launcher: Alpine/musl detection, Rosetta prefers arm64, cached-download
+  fallback from `latest.json` with SHA-256 verification, proxy-aware curl,
+  per-OS guidance, Node >=18, Windows ARM64 package.
+* `install.ps1`: downloads the release, verifies the checksum, installs into
+  `%LOCALAPPDATA%\mfe-player\bin`, updates the user PATH, offers winget for
+  mpv/yt-dlp/python/ffmpeg, registers PowerShell completions and runs doctor.
+* Release workflow builds Windows ARM64, emits `checksums.txt` + `latest.json`,
+  refuses to publish incomplete platform packages, and publishes platform
+  packages before the launcher.
+* TUI polish: drifting gradients, animated logo, marquee titles, pulsing
+  player/cover frames, animated playing markers, autoplay badges, spectrum
+  peak caps, live footer chips (taste/radio/discord/sleep), and two new themes
+  (`rose-pine`, `kanagawa`). Version bumped to 0.3.0 across Cargo, PyPI and npm.
 
 Recommended order: **M0 → M1 → M2** first. M1 is pure Rust and fully testable
 locally, so it can start in parallel with M0 if desired.

@@ -58,13 +58,15 @@ This is **MFE Player** — **M**usic **F**or **E**veryone. It's MIT-licensed, it
 | **Offline downloads** | `d` rips a track to disk and prefers the local copy next time. Planes and bad Wi-Fi are supported. |
 | **Link importing** | `Ctrl+L` accepts a YouTube/SoundCloud track or playlist, or a remote `.m3u`. Paste and go. |
 | **Radio autoplay** | `Ctrl+T` seeds a never-ending station from the current track so the silence never wins. |
+| **Taste autoplay** | When the queue ends, a local model continues with the same vibe — learned from plays, skips and tags. Occasional probes test whether your taste moved. `mfe taste` explains every pick. |
 | **MPRIS / media keys** | Works with `playerctl`, keyboard media keys and desktop widgets — even while detached. |
 | **Album art in the terminal** | Cover art renders as truecolor half-blocks in the inspector — no sixel or Kitty protocol required. |
 | **Cava visualiser** | `Ctrl+V` toggles a smoothed spectrum panel that dances to the actual audio. |
-| **12 themes** | `Alt+T` cycles live, and **preserves the comments in your config file** instead of nuking them. |
-| **Looks like a modern TUI** | Rounded panels, a truecolor gradient logo and an eighth-block progress bar with a smooth head. |
+| **14 themes** | `Alt+T` cycles live, and **preserves the comments in your config file** instead of nuking them. |
+| **Looks like a modern TUI** | Drifting truecolor gradients, a pulsing now-playing frame, sub-cell progress with a glowing head, marquee titles, animated spectrum peaks and live status chips. |
 | **Blends with your wallpaper** | `Alt+W` stops painting the background, so your terminal's own transparency shows the wallpaper through the app. Panels stay solid, so text stays readable. |
 | **Wallpaper palette** | `theme = "wallpaper"` (or `mfe theme adopt`) samples the wallpaper your compositor is using — swww, hyprpaper, GNOME, Plasma, macOS or Windows — and builds a matching dark palette from it. |
+| **Discord Rich Presence** | Optional: friends see the track, artist and progress over Discord’s local socket. No token, no server, no history leaves the machine. |
 | **Sleep timer** | `z` fades out over the last 15 seconds and pauses. No mid-chorus guillotine. |
 | **Playback speed** | `[` / `]` for 0.5×–2.0×, `\` to reset. Podcasts, mixes and 10-hour loops welcome. |
 | **Smart fade** | `Alt+F` ramps the volume down over the last seconds of a song and back up on the next one. No drops, no guillotines. |
@@ -160,6 +162,8 @@ mfe toggle              # play/pause the background player
 mfe stop                # stop playback and the daemon
 mfe doctor              # why is the audio not playing?
 mfe theme adopt         # derive the UI colours from your wallpaper
+mfe taste               # what autoplay has learned about your taste
+mfe discord status      # Discord presence state (on|off|client <id>)
 mfe cache               # artwork size + LRU limit
 mfe update              # grab the latest release (--check to only look)
 ```
@@ -389,7 +393,7 @@ Want scrobbles without handing over a social graph? Paste a ListenBrainz user to
 
 ## 🗺 Roadmap
 
-Shipped: search, playlists, queue, favourites, lyrics, radio, prefetch, downloads, MPRIS, cava, EQ, normalisation, sleep timer, background daemon, 12 themes, speed, smart fade, ReplayGain, ListenBrainz, Internet Archive, Radio Browser, local library, album art, history, stats, sharing, CLI JSON, transparent background, wallpaper palettes, rounded/gradient UI, macOS + Windows transport, `mfe doctor`/`cache`/`update`, npm + PyPI + crates packaging.
+Shipped: search, playlists, queue, favourites, lyrics, radio, prefetch, downloads, MPRIS, cava, EQ, normalisation, sleep timer, background daemon, 14 themes, speed, smart fade, ReplayGain, ListenBrainz, Internet Archive, Radio Browser, local library, album art, history, stats, sharing, CLI JSON, transparent background, wallpaper palettes, rounded/gradient UI, macOS + Windows transport, taste autoplay, Discord Rich Presence, `mfe doctor`/`cache`/`update`, npm + PyPI + crates packaging.
 
 The rest is a real plan, roughly in build order.
 
@@ -398,13 +402,14 @@ The rest is a real plan, roughly in build order.
 - [x] **Wallpaper-aware theme.** `theme = "wallpaper"` / `mfe theme adopt` samples the current wallpaper and derives the panel/accent colours from it.
 - [ ] **Album-art ambient tint.** Accent colour shifts to the dominant colour of the current cover. Opt-in.
 - [ ] **ANSI-native theme.** `theme = "auto"` uses your terminal's own 16 colours, so it matches whichever theme you already run.
-- [x] Rounded borders, gradient logo and a smooth sub-cell progress bar.
-- [ ] 256-colour fallback and a Nerd Font/ASCII icon mode.
-- [ ] Full-screen now-playing view with big art and karaoke lyrics.
+- [x] Rounded borders, animated gradient logo and a smooth sub-cell progress bar.
+- [x] Nerd Font/ASCII icon mode (`icons = "auto" | "nerd" | "ascii"`).
+- [x] Full-screen now-playing view with big art and karaoke lyrics.
+- [x] Animated spectrum peaks, marquee titles, pulsing player frame and status chips.
 
 ### Phase 2 — stop it breaking outside my laptop
 - [x] macOS: `/proc` replaced with `kill(pid, 0)`, native cache paths, CI build.
-- [x] Windows: named-pipe mpv transport (`src/ipc.rs`), detach flags, `clip` clipboard, Python plugin launch, CI build (experimental).
+- [x] Windows: named-pipe mpv transport (`src/ipc.rs`), `CREATE_NO_WINDOW` spawning, `clip` clipboard, Python plugin launch, heartbeat-based daemon control and a CI build.
 - [x] CI matrix for Linux/macOS/Windows so "works on my machine" stops being the test plan.
 - [ ] Platform media controls: SMTC on Windows, Now Playing on macOS (MPRIS is Linux-only).
 
@@ -412,15 +417,15 @@ The rest is a real plan, roughly in build order.
 - [x] `mfe doctor` — checks mpv, yt-dlp, python3, socket, config, plugins, clipboard and wallpaper, then prints the exact fix.
 - [x] `mfe cache clean` plus `mfe cache` for a size readout.
 - [x] `install.sh` (animated, installs deps, runs doctor), AUR `PKGBUILD`, Nix flake, Homebrew formula template and a systemd unit.
-- [x] npm/bun (`optionalDependencies`), pip/pipx/uv wheels via maturin, crates.io, all fed by one release workflow.
+- [x] npm/bun (`optionalDependencies`, including Windows ARM64), pip/pipx/uv wheels via maturin, crates.io, PowerShell installer, all fed by one release workflow with checksums and `latest.json`.
 - [x] `mfe update` (self-replaces from the release tarball; `--check` for scripts).
 - [x] LRU eviction for the artwork cache (128 MiB, oldest covers go first).
 - [ ] A `vhs` demo GIF for this README, because a wall of text is not a demo.
 
 ### Phase 4 — social, on your terms
 - [ ] Last.fm scrobbling plugin (MD5 signature, no OAuth dance).
-- [ ] Discord Rich Presence plugin.
-- [ ] Opt-in desktop notifications on track change.
+- [x] Discord Rich Presence (local IPC, opt-in, no bot token).
+- [x] Opt-in desktop notifications on track change.
 - [ ] Scrobble backfill from local history.
 
 ### Phase 5 — library smarts
@@ -496,10 +501,10 @@ PRs for any unchecked box are welcome. So are issues that start with "this broke
 - **Landing page** with a real demo GIF and one-line installs per distro.
 
 ### Social (without the social graph)
-- **Last.fm** and **Discord Rich Presence** plugins.
+- **Last.fm** scrobbling and richer Discord art (source icons, listen-along links).
 - **Now-playing image card**: render a small PNG with cover, title and source to paste anywhere.
 - **Weekly digest / "listening wrapped"** generated from local history.
-- **Optional desktop notification** with cover art on track change.
+- **Desktop notifications** with cover art on track change (basic notifications already ship).
 
 </details>
 

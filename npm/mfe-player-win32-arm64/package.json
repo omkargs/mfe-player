@@ -1,0 +1,21 @@
+{
+  "name": "mfe-player-win32-arm64",
+  "version": "0.3.0",
+  "description": "mfe-player binary for Windows ARM64",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omkargs/mfe-player.git"
+  },
+  "homepage": "https://github.com/omkargs/mfe-player",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/mfe-player",
+    "bin/mfe-player.exe"
+  ]
+}

@@ -4,6 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use crate::app::{
     palette_ranked, App, FilterKind, HitAction, Overlay, PaletteItem, View, PALETTE_ITEMS,
@@ -19,7 +20,125 @@ fn th() -> theme::Theme {
     theme::get()
 }
 
+/// Render phase shared with helpers that do not take `&App` (track rows).
+/// Set once per frame from `App::phase()`.
+static UI_PHASE: AtomicUsize = AtomicUsize::new(0);
+static UI_PULSE: AtomicU32 = AtomicU32::new(0);
+
+fn phase() -> usize {
+    UI_PHASE.load(Ordering::Relaxed)
+}
+
+fn pulse() -> f32 {
+    f32::from_bits(UI_PULSE.load(Ordering::Relaxed))
+}
+
+/// Blend towards the accent without replacing the base colour, so glow effects
+/// stay readable on every theme (including mono).
+fn glow(base: Color, accent: Color, amount: f32) -> Color {
+    mix(base, accent, amount.clamp(0.0, 1.0))
+}
+
+/// Animated gradient: a highlight sweeps across the text instead of sitting
+/// still. The wave is subtle so long titles stay legible.
+fn animated_gradient(text: &str, from: Color, to: Color, modifier: Modifier) -> Vec<Span<'static>> {
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len().max(1) as f32;
+    let travel = (phase() as f32 * 0.035) % 2.0;
+    chars
+        .iter()
+        .enumerate()
+        .map(|(index, ch)| {
+            let base = index as f32 / len;
+            let wave = ((base - travel + 1.0) % 1.0).min(1.0);
+            // Smooth triangular wave: 0 → 1 → 0 across the text.
+            let t = 1.0 - (wave * 2.0 - 1.0).abs();
+            Span::styled(
+                ch.to_string(),
+                Style::default()
+                    .fg(mix(from, to, base * 0.6 + t * 0.4))
+                    .add_modifier(modifier),
+            )
+        })
+        .collect()
+}
+
+/// A one-cell-tall rule whose hue drifts, used under the header.
+fn gradient_rule(width: usize) -> Line<'static> {
+    let travel = (phase() as f32 * 0.02) % 1.0;
+    let spans: Vec<Span<'static>> = (0..width)
+        .map(|index| {
+            let base = index as f32 / width.max(1) as f32;
+            let t = (base + travel) % 1.0;
+            let colour = if t < 0.5 {
+                mix(th().accent, th().accent2, t * 2.0)
+            } else {
+                mix(th().accent2, th().border, (t - 0.5) * 2.0)
+            };
+            Span::styled("─", Style::default().fg(colour))
+        })
+        .collect();
+    Line::from(spans)
+}
+
+/// Horizontal scroll for text that does not fit. Adds a gap and wraps around
+/// so the beginning is readable again after a slow pass.
+fn marquee(text: &str, width: usize, gap: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= width || width == 0 {
+        return text.to_string();
+    }
+    let cycle = chars.len() + gap;
+    let offset = (phase() / 3) % cycle;
+    let mut out = String::with_capacity(width);
+    for step in 0..width {
+        let index = (offset + step) % cycle;
+        out.push(if index < chars.len() {
+            chars[index]
+        } else {
+            ' '
+        });
+    }
+    out
+}
+
+/// Tiny playing indicator that bounces while audio runs and freezes on pause.
+fn eq_bars(paused: bool) -> String {
+    const FRAMES: [&str; 8] = [
+        "▁▃▅▇",
+        "▂▄▆▇",
+        "▃▅▇▆",
+        "▄▆▇▅",
+        "▅▇▆▄",
+        "▆▇▅▃",
+        "▇▆▄▂",
+        "▆▅▃▁",
+    ];
+    if paused {
+        "▁▁▁▁".to_string()
+    } else {
+        FRAMES[phase() % FRAMES.len()].to_string()
+    }
+}
+
+/// Elapsed / total plus a live remaining countdown.
+fn timeline_label(position: f64, duration: f64) -> String {
+    if duration > 0.0 {
+        let left = (duration - position).max(0.0);
+        format!(
+            " {} / {}  -{} ",
+            format_position(position),
+            format_position(duration),
+            format_position(left)
+        )
+    } else {
+        format!(" {} / --:-- ", format_position(position))
+    }
+}
+
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    UI_PHASE.store(app.phase(), Ordering::Relaxed);
+    UI_PULSE.store(app.track_pulse().to_bits(), Ordering::Relaxed);
     app.hits.clear();
     let area = frame.area();
     frame.render_widget(
@@ -122,7 +241,9 @@ fn ascii_glyph(symbol: &str) -> Option<&'static str> {
         "▎" | "▍" | "▌" | "▋" | "▊" | "▉" | "█" | "▂" | "▃" | "▅" | "▆" | "▇" | "░" | "▒" | "▓" => {
             "="
         }
-        "▀" | "▄" => "#",
+        "▀" | "▄" | "▔" => "#",
+        "▮" | "▐" => "|",
+        "◈" | "◆" | "◇" => "*",
         "⏸" => "||",
         "⏭" => ">>",
         "⏮" => "<<",
@@ -140,13 +261,23 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(th().accent))
-        .title(Span::styled(
-            " now playing · Alt+V / Esc close ",
-            Style::default()
-                .fg(th().accent)
-                .add_modifier(Modifier::BOLD),
-        ))
+        .border_style(Style::default().fg(glow(th().accent, th().accent2, 0.25 + 0.5 * pulse())))
+        .title(Line::from(vec![
+            Span::styled(
+                " now playing ",
+                Style::default()
+                    .fg(th().accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    "{} ",
+                    eq_bars(app.now_playing.is_none() || app.audio_snapshot().paused)
+                ),
+                Style::default().fg(th().green),
+            ),
+            Span::styled("· Alt+V / Esc close ", Style::default().fg(th().dim)),
+        ]))
         .style(Style::default().bg(theme::panel()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -180,27 +311,30 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     if let Some(art_area) = art_area {
+        // A breathing frame around the cover ties the artwork to the accent.
+        let art_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(glow(
+                th().border,
+                th().accent,
+                0.15 + 0.55 * pulse(),
+            )))
+            .style(Style::default().bg(theme::panel()));
+        let art_inner = art_block.inner(art_area);
+        frame.render_widget(art_block, art_area);
         match app.artwork.as_ref() {
-            Some(art) => draw_art(
-                frame,
-                art,
-                Rect {
-                    x: art_area.x + 1,
-                    y: art_area.y + 1,
-                    width: art_area.width.saturating_sub(2),
-                    height: art_area.height.saturating_sub(2),
-                },
-            ),
+            Some(art) => draw_art(frame, art, art_inner),
             None => frame.render_widget(
                 Paragraph::new(vec![
                     Line::from(""),
                     Line::from(Span::styled(
-                        "cover art loads with the track",
+                        " cover art loads with the track ",
                         Style::default().fg(th().faint),
                     )),
                 ])
                 .alignment(Alignment::Center),
-                art_area,
+                art_inner,
             ),
         }
     }
@@ -219,14 +353,14 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
     .split(info);
 
     frame.render_widget(
-        Paragraph::new(track.title.clone())
-            .wrap(Wrap { trim: true })
-            .style(
-                Style::default()
-                    .fg(th().fg)
-                    .bg(theme::panel())
-                    .add_modifier(Modifier::BOLD),
-            ),
+        Paragraph::new(Line::from(animated_gradient(
+            &track.title,
+            th().fg,
+            th().accent2,
+            Modifier::BOLD,
+        )))
+        .wrap(Wrap { trim: true })
+        .style(Style::default().bg(theme::panel())),
         rows[0],
     );
     frame.render_widget(
@@ -265,15 +399,7 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         0.0
     };
-    let label = if duration > 0.0 {
-        format!(
-            " {} / {} ",
-            format_position(snapshot.position),
-            format_position(duration)
-        )
-    } else {
-        format!(" {} / --:-- ", format_position(snapshot.position))
-    };
+    let label = timeline_label(snapshot.position, duration);
     let bar_width = (rows[4].width as usize)
         .saturating_sub(label.chars().count() + 1)
         .max(1);
@@ -384,20 +510,32 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let top =
         Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)]).split(area);
 
+    let playing = app.now_playing.is_some();
+    let paused = app.audio_snapshot().paused;
     let mut logo_spans = vec![Span::styled(
         " ▰ ",
         Style::default()
-            .fg(th().accent)
+            .fg(glow(th().accent, th().accent2, pulse()))
             .add_modifier(Modifier::BOLD),
     )];
-    logo_spans.extend(gradient_text(
+    logo_spans.extend(animated_gradient(
         "MFE PLAYER",
         th().accent,
         th().accent2,
         Modifier::BOLD,
     ));
+    if playing {
+        logo_spans.push(Span::styled(
+            format!("  {} ", eq_bars(paused)),
+            Style::default()
+                .fg(if paused { th().yellow } else { th().green })
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        logo_spans.push(Span::raw("  "));
+    }
     logo_spans.push(Span::styled(
-        "   music for everyone",
+        "music for everyone",
         Style::default().fg(th().dim).add_modifier(Modifier::ITALIC),
     ));
     let logo = Line::from(logo_spans);
@@ -461,12 +599,8 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let rule = "─".repeat(area.width as usize);
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            rule,
-            Style::default().fg(th().border),
-        ))),
+        Paragraph::new(gradient_rule(area.width as usize)),
         Rect {
             x: area.x,
             y: area.y + 2,
@@ -646,6 +780,10 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
     }
 }
 
+/// Peak-hold caps for the spectrum. Static state is fine: cava is drawn from
+/// one thread and resets when the panel width changes.
+static CAVA_PEAKS: std::sync::Mutex<Vec<f64>> = std::sync::Mutex::new(Vec::new());
+
 fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
     if area.height < 3 || area.width < 6 {
         return;
@@ -733,25 +871,49 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
 
     let width = inner.width as usize;
     let height = inner.height as usize;
+    // Per-column levels for this frame, plus peak-hold caps that fall slowly.
+    let mut levels = Vec::with_capacity(width);
+    for col in 0..width {
+        let index = col * values.len() / width.max(1);
+        levels.push(values.get(index).copied().unwrap_or(0.0).clamp(0.0, 1.25));
+    }
+    let mut peaks = CAVA_PEAKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if peaks.len() != width {
+        peaks.resize(width, 0.0);
+    }
+    for (peak, level) in peaks.iter_mut().zip(levels.iter()) {
+        *peak = (*peak - 0.018).max(*level);
+    }
+
     let mut lines = Vec::new();
     for row in 0..height {
         let mut spans = Vec::new();
         for col in 0..width {
-            let index = col * values.len() / width.max(1);
-            let value = values.get(index).copied().unwrap_or(0.0);
+            let value = levels[col];
             let level = value * height as f64;
             let threshold = (height - row) as f64;
-            let (glyph, color) = if level >= threshold {
-                (
-                    "█",
-                    if value > 0.72 {
-                        th().accent
-                    } else if value > 0.38 {
-                        th().accent2
-                    } else {
-                        th().green
-                    },
-                )
+            // Colour by height: bass-green at the bottom, teal mid, accent tip.
+            let vertical = if height > 1 {
+                (height - row) as f32 / height as f32
+            } else {
+                1.0
+            };
+            let tip = if vertical > 0.72 {
+                th().accent
+            } else if vertical > 0.38 {
+                th().accent2
+            } else {
+                th().green
+            };
+            let peak_level = peaks[col] * height as f64;
+            let (glyph, color) = if (level - threshold).abs() < 1.0 && level >= threshold {
+                ("▄", glow(tip, th().fg, 0.35))
+            } else if level >= threshold {
+                ("█", tip)
+            } else if (peak_level - threshold).abs() < 0.6 {
+                ("▔", glow(tip, th().fg, 0.15))
             } else if level > threshold - 0.85 {
                 ("▄", th().accent2)
             } else {
@@ -2135,22 +2297,6 @@ fn draw_eq(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
 
 /// A smooth truecolor ramp across a piece of text. Falls back to the start
 /// colour on terminals that only speak ANSI.
-fn gradient_text(text: &str, from: Color, to: Color, modifier: Modifier) -> Vec<Span<'static>> {
-    let chars: Vec<char> = text.chars().collect();
-    let last = chars.len().saturating_sub(1).max(1) as f32;
-    chars
-        .iter()
-        .enumerate()
-        .map(|(index, ch)| {
-            let t = index as f32 / last;
-            Span::styled(
-                ch.to_string(),
-                Style::default().fg(mix(from, to, t)).add_modifier(modifier),
-            )
-        })
-        .collect()
-}
-
 fn mix(from: Color, to: Color, t: f32) -> Color {
     match (from, to) {
         (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
@@ -2170,16 +2316,31 @@ fn bar_spans(width: usize, ratio: f64) -> Vec<Span<'static>> {
     let full = cells.floor() as usize;
     let partial = ((cells - full as f64) * 8.0).round() as usize;
     let denominator = width.max(1) as f32;
+    // The highlight drifts slowly so a paused bar still feels alive without
+    // distracting from the music.
+    let travel = (phase() as f32 * 0.012) % 1.0;
 
     (0..width)
         .map(|index| {
-            let colour = mix(th().accent, th().accent2, index as f32 / denominator);
+            let base = index as f32 / denominator;
+            let colour = mix(th().accent, th().accent2, (base + travel) % 1.0);
             if index < full {
                 Span::styled("█", Style::default().fg(colour))
             } else if index == full && partial > 0 {
-                Span::styled(PARTIAL[partial.min(8)], Style::default().fg(colour))
+                // Bright head cell makes the play position unmistakable.
+                Span::styled(
+                    PARTIAL[partial.min(8)],
+                    Style::default().fg(glow(colour, th().fg, 0.55)),
+                )
             } else {
-                Span::styled("░", Style::default().fg(th().border))
+                Span::styled(
+                    if (index + phase() / 12) % 6 == 0 {
+                        "╌"
+                    } else {
+                        "░"
+                    },
+                    Style::default().fg(glow(th().border, th().accent, 0.08)),
+                )
             }
         })
         .collect()
@@ -2204,21 +2365,33 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(th().border))
+        .border_style(Style::default().fg(glow(
+            th().border,
+            if snapshot.paused {
+                th().yellow
+            } else {
+                th().accent
+            },
+            0.18 + 0.55 * pulse(),
+        )))
         .title(Line::from(vec![
             Span::styled(" now playing ", Style::default().fg(th().dim)),
             Span::styled(
                 if app.resolving {
                     format!("{} resolving ", app.spinner_char())
                 } else if app.now_playing.is_some() {
-                    "● ".to_string()
+                    format!("{} ", eq_bars(snapshot.paused))
                 } else {
                     "○ ".to_string()
                 },
                 Style::default().fg(if app.resolving {
                     th().yellow
                 } else if app.now_playing.is_some() {
-                    th().green
+                    if snapshot.paused {
+                        th().yellow
+                    } else {
+                        th().green
+                    }
                 } else {
                     th().faint
                 }),
@@ -2247,17 +2420,37 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
         )
     };
     let left_width = rows[0].width.saturating_sub(16) as usize;
-    let line = Line::from(vec![
-        Span::styled(" ▶ ", Style::default().fg(th().accent)),
+    let artist_room = if rows[0].width >= 70 { 30 } else { 0 };
+    let title_room = left_width.saturating_sub(2 + artist_room).max(4);
+    let shown_title = marquee(&title, title_room, 6);
+    let mut title_spans = vec![
         Span::styled(
-            truncate(&title, left_width.saturating_sub(2)),
+            format!(" {} ", if snapshot.paused { "▮" } else { "▸" }),
+            Style::default()
+                .fg(if snapshot.paused {
+                    th().yellow
+                } else {
+                    glow(th().accent, th().accent2, pulse())
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            shown_title,
             Style::default().fg(th().fg).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!("  {}", truncate(&artist, 30)),
+    ];
+    if let Some(track) = app.now_playing.as_ref() {
+        if track.auto_queued {
+            title_spans.push(Span::styled(" ✦", Style::default().fg(th().purple)));
+        }
+    }
+    if artist_room > 0 {
+        title_spans.push(Span::styled(
+            format!("  {}", truncate(&artist, artist_room)),
             Style::default().fg(th().dim),
-        ),
-    ]);
+        ));
+    }
+    let line = Line::from(title_spans);
     frame.render_widget(
         Paragraph::new(line).style(Style::default().bg(theme::panel2())),
         rows[0],
@@ -2281,15 +2474,7 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         0.0
     };
-    let time_label = if duration > 0.0 {
-        format!(
-            " {} / {} ",
-            format_position(snapshot.position),
-            format_position(duration)
-        )
-    } else {
-        format!(" {} / --:-- ", format_position(snapshot.position))
-    };
+    let time_label = timeline_label(snapshot.position, duration);
     let bar_width = (gauge_area[0].width as usize)
         .saturating_sub(time_label.chars().count() + 1)
         .max(1);
@@ -2322,6 +2507,12 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     if app.radio {
         mode.push_str("  radio");
+    }
+    if app.config.autoplay.eq_ignore_ascii_case("taste") {
+        mode.push_str("  ♫ taste");
+    }
+    if app.discord_active() {
+        mode.push_str("  ◈ discord");
     }
     if app.eq != "flat" {
         mode.push_str(&format!("  eq:{}", app.eq));
@@ -2401,16 +2592,53 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         app.status.as_str()
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            format!(
-                "{} ",
-                truncate(status, cols[1].width.saturating_sub(2) as usize)
-            ),
+    // Live state chips: only shown when they add information. The status text
+    // gets whatever room is left so it is never pushed off-screen.
+    let mut chips: Vec<(&str, Color)> = Vec::new();
+    if app.config.autoplay.eq_ignore_ascii_case("taste") {
+        chips.push(("♫ taste", th().purple));
+    }
+    if app.discord_active() {
+        chips.push(("◈ discord", th().accent2));
+    }
+    if app.radio {
+        chips.push(("◉ radio", th().green));
+    }
+    let sleep_chip = app.sleep_label();
+    if let Some(label) = sleep_chip.as_ref() {
+        chips.push((label.as_str(), th().yellow));
+    }
+    let chip_width: usize = chips
+        .iter()
+        .map(|(label, _)| label.chars().count() + 2)
+        .sum::<usize>()
+        + chips.len().saturating_sub(1);
+    let status_room = (cols[1].width as usize).saturating_sub(chip_width + 2);
+    let mut spans = vec![Span::styled(" ", Style::default())];
+    if status_room > 0 {
+        spans.push(Span::styled(
+            truncate(status, status_room),
             Style::default().fg(if app.resolving { th().yellow } else { th().dim }),
-        )))
-        .alignment(Alignment::Right)
-        .style(Style::default().bg(theme::bg())),
+        ));
+        spans.push(Span::raw(" "));
+    }
+    for (index, (label, colour)) in chips.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            format!(" {label} "),
+            Style::default()
+                .fg(theme::bg())
+                .bg(*colour)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.push(Span::raw(" "));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans))
+            .alignment(Alignment::Right)
+            .style(Style::default().bg(theme::bg())),
         cols[1],
     );
 }
@@ -3252,12 +3480,15 @@ fn track_line(
     } else {
         Style::default().fg(th().dim)
     };
+    const PLAY_FRAMES: [&str; 8] = ["▁", "▂", "▃", "▅", "▇", "▅", "▃", "▂"];
     let marker = if playing {
-        "▶"
+        PLAY_FRAMES[phase() % PLAY_FRAMES.len()]
     } else if marked {
         "✓"
     } else if favorite {
         "★"
+    } else if track.auto_queued {
+        "✦"
     } else if selected {
         "▌"
     } else {
@@ -3269,13 +3500,17 @@ fn track_line(
             .fg(th().bg)
             .add_modifier(Modifier::BOLD)
     } else if playing {
-        Style::default().fg(th().green).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(glow(th().green, th().accent2, pulse()))
+            .add_modifier(Modifier::BOLD)
     } else if marked {
         Style::default()
             .fg(th().accent2)
             .add_modifier(Modifier::BOLD)
     } else if favorite {
         Style::default().fg(th().yellow)
+    } else if track.auto_queued {
+        Style::default().fg(th().purple)
     } else {
         Style::default().fg(th().faint)
     };

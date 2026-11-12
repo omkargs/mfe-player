@@ -32,6 +32,8 @@ jobs:
             target: aarch64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
 
@@ -71,8 +73,49 @@ jobs:
             mfe-player-*.zip
           if-no-files-found: error
 
-  github-release:
+  manifest:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and latest.json
+        run: |
+          set -euo pipefail
+          cd dist
+          # One checksums file for every artefact in this release.
+          sha256sum mfe-player-* > checksums.txt
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            echo "{ \"version\": \"$VERSION\", \"targets\": {"
+            first=1
+            for file in mfe-player-*.tar.gz mfe-player-*.zip; do
+              [ -e "$file" ] || continue
+              triple="${file#mfe-player-}"
+              triple="${triple%.tar.gz}"
+              triple="${triple%.zip}"
+              sum="$(sha256sum "$file" | cut -d' ' -f1)"
+              if [ $first -eq 1 ]; then first=0; else echo ","; fi
+              printf '  "%s": { "url": "https://github.com/%s/releases/download/v%s/%s", "sha256": "%s" }' \
+                "$triple" "${{ github.repository }}" "$VERSION" "$file" "$sum"
+            done
+            echo ""
+            echo "} }"
+          } > latest.json
+          cat latest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manifest
+          path: |
+            dist/checksums.txt
+            dist/latest.json
+          if-no-files-found: error
+
+  github-release:
+    needs: [build, manifest]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -80,6 +123,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Include installers in the release
+        run: |
+          cp install.sh dist/install.sh 2>/dev/null || true
+          cp npm/mfe-player/install.ps1 dist/install.ps1
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
@@ -112,16 +159,23 @@ jobs:
             npm/mfe-player-linux-arm64/bin \
             npm/mfe-player-darwin-x64/bin \
             npm/mfe-player-darwin-arm64/bin \
-            npm/mfe-player-win32-x64/bin
+            npm/mfe-player-win32-x64/bin \
+            npm/mfe-player-win32-arm64/bin
           tar -xzf dist/mfe-player-x86_64-unknown-linux-gnu.tar.gz  -C npm/mfe-player-linux-x64/bin
           tar -xzf dist/mfe-player-x86_64-unknown-linux-musl.tar.gz -C npm/mfe-player-linux-x64-musl/bin
           tar -xzf dist/mfe-player-aarch64-unknown-linux-gnu.tar.gz -C npm/mfe-player-linux-arm64/bin
           tar -xzf dist/mfe-player-x86_64-apple-darwin.tar.gz        -C npm/mfe-player-darwin-x64/bin
           tar -xzf dist/mfe-player-aarch64-apple-darwin.tar.gz       -C npm/mfe-player-darwin-arm64/bin
           unzip -q dist/mfe-player-x86_64-pc-windows-msvc.zip        -d npm/mfe-player-win32-x64/bin
+          unzip -q dist/mfe-player-aarch64-pc-windows-msvc.zip       -d npm/mfe-player-win32-arm64/bin
           find npm -name mfe-player -type f -exec chmod +x {} +
           node npm/scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
 
+      - name: Verify packages
+        run: node npm/scripts/check-packages.mjs
+
+      # Platform packages first: the launcher's optionalDependencies point at
+      # exact versions, so publishing it first would install nothing.
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

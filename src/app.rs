@@ -14,6 +14,7 @@ use crate::artwork::Artwork;
 use crate::audio::{AudioEngine, AudioSnapshot};
 use crate::cava::Cava;
 use crate::config::{self, AppConfig};
+use crate::discord::{self, Discord};
 use crate::library;
 use crate::models::{
     parse_lyrics, truncate, Album, Artist, LyricLine, LyricsDoc, Playlist, SearchPayload,
@@ -794,6 +795,8 @@ pub struct App {
     pub mouse_enabled: bool,
     mpris: Option<Mpris>,
     mpris_signature: Option<String>,
+    discord: Option<Discord>,
+    discord_signature: Option<String>,
     pub open_playlist: Option<usize>,
     pub playlist_track_selected: usize,
     pub plugins: PluginRegistry,
@@ -843,6 +846,10 @@ pub struct App {
     pub artwork_track_id: Option<String>,
     artwork_url: Option<String>,
     pub spinner: usize,
+    /// Frames left in the "new track" flourish. Used by the UI to pulse the
+    /// player border and title, then fades out on its own.
+    track_flash: u8,
+    seen_track: Option<String>,
     scrobbler: Scrobbler,
     /// Lossless glue between tracks: ramps mpv's volume down at the end of a
     /// song and back up at the start of the next one.
@@ -887,6 +894,18 @@ impl App {
             .then(|| Cava::spawn(config.cava_bars));
         let downloads = load_downloads();
         let mpris = config.mpris.then(Mpris::start);
+        // Exactly one process owns the Discord connection. When a background
+        // daemon exists it is the owner; the TUI only drives presence when it
+        // is the only thing playing. Otherwise both would race over one card.
+        let discord_owner = headless || !crate::daemon::is_running();
+        let discord_client = config.discord_client_id.trim().to_string();
+        let discord_client = if discord_client.is_empty() {
+            std::env::var("MFE_DISCORD_CLIENT_ID").unwrap_or_default()
+        } else {
+            discord_client
+        };
+        let discord = (config.discord && discord_owner && !discord_client.is_empty())
+            .then(|| Discord::start(discord_client));
         let (persisted, state_warning) = PersistedState::load();
         let (mut taste, taste_warning) = Taste::load();
         let history_tracks: Vec<Track> = persisted
@@ -1035,6 +1054,8 @@ impl App {
             mouse_enabled: cfg_mouse,
             mpris,
             mpris_signature: None,
+            discord,
+            discord_signature: None,
             open_playlist: None,
             playlist_track_selected: 0,
             plugins,
@@ -1078,6 +1099,8 @@ impl App {
             artwork_track_id: None,
             artwork_url: None,
             spinner: 0,
+            track_flash: 0,
+            seen_track: None,
             scrobbler: Scrobbler::new(listenbrainz_token),
             fade_level: 1.0,
             eq_gains: normalize_eq_gains(&persisted.eq_gains),
@@ -1123,11 +1146,25 @@ impl App {
     pub fn tick(&mut self) {
         self.spinner = self.spinner.wrapping_add(1);
 
+        // A track change gets a short accent flourish instead of appearing
+        // silently. Comparing ids also ignores metadata updates for the same
+        // song, so the flash only fires on a real transition.
+        let current = self.now_playing.as_ref().map(|track| track.id.clone());
+        if current != self.seen_track {
+            if current.is_some() {
+                self.track_flash = 18;
+            }
+            self.seen_track = current;
+        } else if self.track_flash > 0 {
+            self.track_flash -= 1;
+        }
+
         while let Ok(event) = self.events_rx.try_recv() {
             self.handle_event(event);
         }
 
         self.poll_mpris();
+        self.poll_discord();
         self.check_sleep_timer();
         self.maybe_prime_radio();
         if let Some(track) = self.now_playing.clone() {
@@ -2268,6 +2305,48 @@ impl App {
         if self.mpris_signature.as_deref() != Some(signature.as_str()) {
             mpris.push(update);
             self.mpris_signature = Some(signature);
+        }
+    }
+
+    /// Push presence only when the visible activity actually changed. The
+    /// worker thread handles connecting, reconnecting and Discord being closed.
+    fn poll_discord(&mut self) {
+        if self.discord.is_none() {
+            return;
+        }
+        let snapshot = self.audio_snapshot();
+        let mut activity = self.now_playing.as_ref().map(|track| {
+            let mut activity = discord::Activity::from_track(
+                track,
+                snapshot.position,
+                snapshot.paused,
+                &self.config.discord_asset,
+            );
+            activity.buttons = self.config.discord_show_buttons;
+            activity
+        });
+        // Paused cards are opt-in. `None` tells the worker to clear the card,
+        // so disabling updates while paused also hides an existing one.
+        let visible = match activity.as_ref() {
+            Some(activity) => {
+                !activity.paused
+                    || self.config.discord_show_paused
+                    || self.config.discord_when_private
+            }
+            None => true,
+        };
+        if !visible {
+            activity = None;
+        }
+        let signature = activity
+            .as_ref()
+            .map(|activity| activity.signature(snapshot.position))
+            .unwrap_or_else(|| "hidden".to_string());
+        if self.discord_signature.as_deref() != Some(signature.as_str()) {
+            if let Some(discord) = self.discord.as_ref() {
+                discord.push(activity);
+            }
+            self.discord_signature = Some(signature);
         }
     }
 
@@ -6094,6 +6173,22 @@ impl App {
             .as_ref()
             .map(AudioEngine::snapshot)
             .unwrap_or_default()
+    }
+
+    /// True when this process actually owns a Discord connection.
+    pub fn discord_active(&self) -> bool {
+        self.discord.is_some()
+    }
+
+    /// Monotonic animation phase. UI code uses it for gradients, marquees and
+    /// equaliser glyphs without keeping its own clock.
+    pub fn phase(&self) -> usize {
+        self.spinner
+    }
+
+    /// 0.0 (idle) .. 1.0 (just changed track) pulse for the player chrome.
+    pub fn track_pulse(&self) -> f32 {
+        (self.track_flash as f32 / 18.0).clamp(0.0, 1.0)
     }
 
     pub fn spinner_char(&self) -> &'static str {

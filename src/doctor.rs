@@ -112,6 +112,22 @@ pub fn run() -> i32 {
         Some(tool) => println!("  ok clipboard via {tool}"),
         None => println!("  !  no clipboard tool found — mfe share will fail"),
     }
+    if app_config.discord {
+        let id = if !app_config.discord_client_id.trim().is_empty() {
+            app_config.discord_client_id.trim().to_string()
+        } else {
+            std::env::var("MFE_DISCORD_CLIENT_ID").unwrap_or_default()
+        };
+        if id.is_empty() {
+            println!(
+                "  !  discord presence is on but has no client id — run `mfe discord client <id>`"
+            );
+        } else if crate::discord::socket_present() {
+            println!("  ok discord presence (desktop client detected)");
+        } else {
+            println!("  ·  discord presence configured — desktop client not running");
+        }
+    }
     match wallpaper::detect() {
         Some(path) => println!("  ok wallpaper: {}", path.display()),
         None => println!(

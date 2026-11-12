@@ -4,11 +4,11 @@
 #   brew install mfe-player
 #
 # Replace the sha256 after tagging a release:
-#   curl -sL https://github.com/omkargs/mfe-player/archive/refs/tags/v0.2.1.tar.gz | shasum -a 256
+#   curl -sL https://github.com/omkargs/mfe-player/archive/refs/tags/v0.3.0.tar.gz | shasum -a 256
 class MfePlayer < Formula
   desc "Plugin-driven terminal music player with mpv, no subscription"
   homepage "https://github.com/omkargs/mfe-player"
-  url "https://github.com/omkargs/mfe-player/archive/refs/tags/v0.2.1.tar.gz"
+  url "https://github.com/omkargs/mfe-player/archive/refs/tags/v0.3.0.tar.gz"
   sha256 "REPLACE_WITH_RELEASE_SHA256"
   license "MIT"
 

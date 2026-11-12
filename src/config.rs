@@ -173,6 +173,18 @@ pub fn daemon_pid_path() -> PathBuf {
     runtime_dir().join("daemon.pid")
 }
 
+/// Heartbeat written by the daemon every second. Its pid must match the pid
+/// file and stay fresh, which makes stale pid files and PID reuse harmless.
+pub fn daemon_heartbeat_path() -> PathBuf {
+    runtime_dir().join("daemon.heartbeat")
+}
+
+/// Presence of this file asks a running daemon to shut down gracefully. It
+/// works on every platform, including Windows where signals are unreliable.
+pub fn daemon_stop_path() -> PathBuf {
+    runtime_dir().join("daemon.stop")
+}
+
 pub fn daemon_log_path() -> PathBuf {
     config_dir().join("daemon.log")
 }
@@ -274,6 +286,18 @@ pub struct AppConfig {
     pub autoplay_probe: bool,
     /// Learn from plays/skips. Turning this off keeps radio-style autoplay.
     pub taste_enabled: bool,
+    /// Show the current track on Discord Rich Presence.
+    pub discord: bool,
+    /// Discord application client id (Developer Portal → OAuth2).
+    pub discord_client_id: String,
+    /// Large image asset key uploaded to that Discord application.
+    pub discord_asset: String,
+    /// Keep the presence visible while playback is paused.
+    pub discord_show_paused: bool,
+    /// Show the "Get mfe-player" buttons on the presence card.
+    pub discord_show_buttons: bool,
+    /// Hide presence while running a private/headless session.
+    pub discord_when_private: bool,
 }
 
 impl Default for AppConfig {
@@ -309,6 +333,12 @@ impl Default for AppConfig {
             autoplay_probe_every: 10,
             autoplay_probe: true,
             taste_enabled: true,
+            discord: false,
+            discord_client_id: String::new(),
+            discord_asset: "mfe".to_string(),
+            discord_show_paused: false,
+            discord_show_buttons: true,
+            discord_when_private: false,
         }
     }
 }
@@ -400,6 +430,19 @@ icons = "nerd"
 
 # Desktop notification when a new track starts (Linux, macOS, Windows).
 notifications = false
+
+# Discord Rich Presence. Create an application at
+# https://discord.com/developers/applications, copy its client id, upload an
+# image asset (default key "mfe"), then enable this. Nothing leaves your
+# machine: presence is sent over Discord's local IPC socket.
+discord = false
+discord_client_id = ""
+discord_asset = "mfe"
+# Keep the card visible when paused, and show project buttons (max two).
+discord_show_paused = false
+discord_show_buttons = true
+# Hide presence for private sessions (headless daemon keeps showing it).
+discord_when_private = false
 "#;
 
 fn write_atomic(path: &std::path::Path, raw: &str) {
@@ -433,6 +476,11 @@ pub fn load_config() -> (AppConfig, Option<String>) {
                 }
                 config.autoplay_explore = config.autoplay_explore.clamp(0.0, 1.0);
                 config.autoplay_probe_every = config.autoplay_probe_every.clamp(3, 100);
+                config.discord_client_id = config.discord_client_id.trim().to_string();
+                config.discord_asset = config.discord_asset.trim().to_string();
+                if config.discord_asset.is_empty() {
+                    config.discord_asset = "mfe".to_string();
+                }
                 (config, None)
             }
             Err(err) => (

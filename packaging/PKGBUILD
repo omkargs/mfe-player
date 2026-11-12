@@ -1,6 +1,6 @@
 # Maintainer: Omkar <https://github.com/omkargs>
 pkgname=mfe-player
-pkgver=0.2.1
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Plugin-driven terminal music player: mpv, ratatui, no subscription"
 arch=('x86_64' 'aarch64')

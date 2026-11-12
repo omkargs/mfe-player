@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "mfe-player"
-version = "0.2.1"
+version = "0.3.0"
 description = "A plugin-driven terminal music player: mpv, ratatui, no subscription, no account."
 readme = "README.md"
 requires-python = ">=3.8"

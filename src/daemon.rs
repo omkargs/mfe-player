@@ -32,11 +32,61 @@ fn pid_alive(pid: u32) -> bool {
     ipc::pid_alive(pid)
 }
 
+/// Seconds a heartbeat may be stale before the daemon is considered gone.
+const HEARTBEAT_TTL: u64 = 15;
+
+fn heartbeat_is_fresh(pid: u32) -> bool {
+    let Ok(raw) = fs::read_to_string(config::daemon_heartbeat_path()) else {
+        return false;
+    };
+    let mut parts = raw.split_whitespace();
+    let recorded: Option<u32> = parts.next().and_then(|value| value.parse().ok());
+    let stamp: Option<u64> = parts.next().and_then(|value| value.parse().ok());
+    if recorded != Some(pid) {
+        return false;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    stamp.is_some_and(|stamp| now.saturating_sub(stamp) <= HEARTBEAT_TTL)
+}
+
+fn write_heartbeat(pid: u32) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let _ = fs::write(config::daemon_heartbeat_path(), format!("{pid} {now}"));
+}
+
+/// The pid file alone can lie (crashes leave it behind, and Windows reuses
+/// pids aggressively). A live process *and* a fresh heartbeat are required.
 pub fn running_pid() -> Option<u32> {
-    fs::read_to_string(config::daemon_pid_path())
+    let pid = fs::read_to_string(config::daemon_pid_path())
         .ok()
-        .and_then(|raw| raw.trim().parse::<u32>().ok())
-        .filter(|pid| pid_alive(*pid))
+        .and_then(|raw| raw.trim().parse::<u32>().ok())?;
+    if !pid_alive(pid) {
+        return None;
+    }
+    if heartbeat_is_fresh(pid) {
+        return Some(pid);
+    }
+    // Upgrade window: an older daemon wrote a pid file but no heartbeat yet.
+    // Trust a recently-created pid file for a few seconds so it can be asked
+    // to stop gracefully instead of being orphaned.
+    let recent = fs::metadata(config::daemon_pid_path())
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.elapsed().ok())
+        .is_some_and(|age| age < Duration::from_secs(30));
+    recent.then_some(pid)
+}
+
+/// Ask the daemon to stop by dropping a marker file. The daemon drains the
+/// queue, persists state and exits on its own; no `taskkill`, no lost writes.
+fn request_stop() {
+    let _ = fs::write(config::daemon_stop_path(), std::process::id().to_string());
 }
 
 pub fn is_running() -> bool {
@@ -73,8 +123,24 @@ pub fn spawn_background() -> Result<()> {
 pub fn stop_background() {
     let Some(pid) = running_pid() else {
         let _ = fs::remove_file(config::daemon_pid_path());
+        let _ = fs::remove_file(config::daemon_heartbeat_path());
+        let _ = fs::remove_file(config::daemon_stop_path());
         return;
     };
+    // Graceful path first: the daemon notices the marker on its next tick and
+    // saves state before exiting. Only fall back to a signal when it is wedged.
+    request_stop();
+    let graceful = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < graceful && pid_alive(pid) {
+        thread::sleep(Duration::from_millis(80));
+    }
+    if !pid_alive(pid) {
+        let _ = fs::remove_file(config::daemon_pid_path());
+        let _ = fs::remove_file(config::daemon_heartbeat_path());
+        let _ = fs::remove_file(config::daemon_stop_path());
+        return;
+    }
+    let _ = fs::remove_file(config::daemon_stop_path());
     ipc::terminate(pid);
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline && pid_alive(pid) {
@@ -118,7 +184,9 @@ pub fn takeover() {
 /// Entry point for `mfe-player --daemon`.
 pub fn run() -> Result<()> {
     config::ensure_dirs()?;
+    let _ = fs::remove_file(config::daemon_stop_path());
     let _ = fs::write(config::daemon_pid_path(), std::process::id().to_string());
+    write_heartbeat(std::process::id());
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
@@ -148,14 +216,24 @@ pub fn run() -> Result<()> {
     app.daemon_resume_if_idle();
     app.persist();
 
+    let mut last_beat = Instant::now();
     while !SHUTDOWN.load(Ordering::SeqCst) {
+        if config::daemon_stop_path().exists() {
+            break;
+        }
         app.tick();
+        if last_beat.elapsed() >= Duration::from_secs(1) {
+            write_heartbeat(std::process::id());
+            last_beat = Instant::now();
+        }
         thread::sleep(Duration::from_millis(80));
     }
 
     app.release_audio();
     app.persist();
     let _ = fs::remove_file(config::daemon_pid_path());
+    let _ = fs::remove_file(config::daemon_heartbeat_path());
+    let _ = fs::remove_file(config::daemon_stop_path());
     Ok(())
 }
 

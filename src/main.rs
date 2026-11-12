@@ -4,6 +4,7 @@ mod audio;
 mod cava;
 mod config;
 mod daemon;
+mod discord;
 mod doctor;
 mod ipc;
 mod library;
@@ -35,6 +36,12 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 fn main() -> Result<()> {
+    // CLI output is routinely piped (`mfe taste | head`). The default Rust
+    // behaviour for a closed pipe is a panic; a Unix tool should exit quietly.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     config::migrate_legacy();
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
     if raw_args.iter().any(|arg| arg == "--daemon") {
@@ -137,6 +144,104 @@ fn main() -> Result<()> {
                     }
                 }
                 _ => println!("{}", config.theme),
+            }
+            return Ok(());
+        }
+        Some("discord") => {
+            let (app_config, _) = config::load_config();
+            let action = raw_args.get(1).map(String::as_str).unwrap_or("status");
+            match action {
+                "on" | "enable" => {
+                    config::set_line("discord", "true");
+                    println!("discord presence enabled");
+                    println!(
+                        "  shares: track title, artist, album and playback progress over Discord's local IPC socket"
+                    );
+                    println!("  never shares: file paths, listening history, tokens or IPs");
+                    if app_config.discord_client_id.trim().is_empty()
+                        && std::env::var("MFE_DISCORD_CLIENT_ID").is_err()
+                    {
+                        println!();
+                        println!("next: set an application client id with");
+                        println!("  mfe discord client <id>   (or export MFE_DISCORD_CLIENT_ID)");
+                        println!("create one at https://discord.com/developers/applications");
+                    }
+                    println!("restart mfe-player (or the daemon) to apply");
+                }
+                "off" | "disable" => {
+                    config::set_line("discord", "false");
+                    println!("discord presence disabled");
+                    println!("restart mfe-player (or the daemon) to apply");
+                }
+                "client" | "id" => match raw_args.get(2) {
+                    Some(id) if !id.trim().is_empty() => {
+                        config::set_line("discord_client_id", &format!("\"{}\"", id.trim()));
+                        config::set_line("discord", "true");
+                        println!("discord client id set · presence enabled");
+                    }
+                    _ => eprintln!("usage: mfe discord client <application-id>"),
+                },
+                "asset" => match raw_args.get(2) {
+                    Some(asset) if !asset.trim().is_empty() => {
+                        config::set_line("discord_asset", &format!("\"{}\"", asset.trim()));
+                        println!("discord large-image asset set to “{}”", asset.trim());
+                    }
+                    _ => eprintln!("usage: mfe discord asset <key>"),
+                },
+                "status" => {
+                    let id = if !app_config.discord_client_id.trim().is_empty() {
+                        app_config.discord_client_id.trim().to_string()
+                    } else {
+                        std::env::var("MFE_DISCORD_CLIENT_ID").unwrap_or_default()
+                    };
+                    println!("discord presence");
+                    println!(
+                        "  enabled   {}",
+                        if app_config.discord { "yes" } else { "no" }
+                    );
+                    println!(
+                        "  client id {}",
+                        if id.is_empty() {
+                            "not set"
+                        } else {
+                            id.as_str()
+                        }
+                    );
+                    println!("  asset     {}", app_config.discord_asset);
+                    println!(
+                        "  paused    {}",
+                        if app_config.discord_show_paused {
+                            "shown"
+                        } else {
+                            "hidden"
+                        }
+                    );
+                    println!(
+                        "  buttons   {}",
+                        if app_config.discord_show_buttons {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    );
+                    println!(
+                        "  discord   {}",
+                        if discord::socket_present() {
+                            "desktop client detected"
+                        } else {
+                            "not running (presence is inert)"
+                        }
+                    );
+                    if app_config.discord && id.is_empty() {
+                        println!();
+                        println!("presence stays off until a client id is configured.");
+                        println!("run: mfe discord client <id>");
+                    }
+                }
+                other => {
+                    eprintln!("usage: mfe discord [on|off|status|client <id>|asset <key>]");
+                    eprintln!("unknown action: {other}");
+                }
             }
             return Ok(());
         }
@@ -271,10 +376,11 @@ fn completions(shell: &str) -> String {
     match shell {
         "fish" => {
             r#"# mfe-player fish completions
-complete -c mfe -f -a "status current share theme taste doctor cache update toggle stop completions" -d "MFE Player"
+complete -c mfe -f -a "status current share theme taste discord doctor cache update toggle stop completions" -d "MFE Player"
 complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
-complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish"
+complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish powershell"
 complete -c mfe -n "__fish_seen_subcommand_from taste" -a "status explain reset like dislike" -d "Taste profile"
+complete -c mfe -n "__fish_seen_subcommand_from discord" -a "on off status client asset" -d "Discord presence"
 "#
         }
         "zsh" => {
@@ -286,6 +392,7 @@ _mfe() {
     'current:one-line now playing'
     'share:copy now playing to the clipboard'
     'taste:show or reset what autoplay has learned'
+    'discord:configure Discord Rich Presence'
     'theme:show or adopt a colour theme'
     'doctor:check mpv, plugins, config and clipboard'
     'cache:show or clear the artwork cache'
@@ -303,16 +410,40 @@ _mfe() {
       if [[ $words[2] == status ]]; then
         _arguments '--json[JSON output]'
       elif [[ $words[2] == completions ]]; then
-        _values 'shell' bash zsh fish
+        _values 'shell' bash zsh fish powershell
       elif [[ $words[2] == theme ]]; then
         _values 'action' adopt list
       elif [[ $words[2] == taste ]]; then
         _values 'action' status explain reset like dislike
+      elif [[ $words[2] == discord ]]; then
+        _values 'action' on off status client asset
       fi
       ;;
   esac
 }
 _mfe "$@"
+"#
+        }
+        "powershell" | "pwsh" => {
+            r#"# mfe-player PowerShell completions
+Register-ArgumentCompleter -Native -CommandName mfe,mfe-player -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $commands = @('status','current','share','theme','taste','discord','doctor','cache','update','toggle','stop','completions')
+    $words = $commandAst.CommandElements | ForEach-Object { $_.ToString() }
+    if ($words.Count -le 2) {
+        $commands | Where-Object { $_ -like "$wordToComplete*" } |
+            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    } elseif ($words[1] -eq 'completions') {
+        @('bash','zsh','fish','powershell') | Where-Object { $_ -like "$wordToComplete*" } |
+            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    } elseif ($words[1] -eq 'discord') {
+        @('on','off','status','client','asset') | Where-Object { $_ -like "$wordToComplete*" } |
+            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    } elseif ($words[1] -eq 'taste') {
+        @('status','explain','reset','like','dislike') | Where-Object { $_ -like "$wordToComplete*" } |
+            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    }
+}
 "#
         }
         _ => {
@@ -323,13 +454,15 @@ _mfe_player() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "status current share theme taste doctor cache update toggle stop completions" -- "$cur") )
+    COMPREPLY=( $(compgen -W "status current share theme taste discord doctor cache update toggle stop completions" -- "$cur") )
   elif [ "$prev" = "completions" ]; then
-    COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
+    COMPREPLY=( $(compgen -W "bash zsh fish powershell" -- "$cur") )
   elif [ "$prev" = "theme" ]; then
     COMPREPLY=( $(compgen -W "adopt list" -- "$cur") )
   elif [ "$prev" = "taste" ]; then
     COMPREPLY=( $(compgen -W "status explain reset like dislike" -- "$cur") )
+  elif [ "$prev" = "discord" ]; then
+    COMPREPLY=( $(compgen -W "on off status client asset" -- "$cur") )
   elif [ "$prev" = "cache" ]; then
     COMPREPLY=( $(compgen -W "clean" -- "$cur") )
   elif [ "$prev" = "update" ]; then
@@ -371,9 +504,12 @@ fn cli_action() -> CliAction {
                mfe-player taste           what autoplay has learned\n\
                mfe-player taste explain   why the last autoplay pick was chosen\n\
                mfe-player taste reset     forget the profile (session|all|probes)\n\
+               mfe-player discord         Discord Rich Presence status\n\
+               mfe-player discord on|off  enable or disable presence\n\
+               mfe-player discord client <id>   set the Discord application id\n\
                mfe-player toggle          play/pause the background player\n\
                mfe-player stop            stop playback and the daemon\n\
-               mfe-player completions bash|zsh|fish\n\n\
+               mfe-player completions bash|zsh|fish|powershell\n\n\
              First run installs default plugins into ~/.config/mfe-player/plugins.\n\
              Config: ~/.config/mfe-player/config.toml (themes, steps, cava, ...).\n\
              Press ? inside the app for the full keymap.\n\n\

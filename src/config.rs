@@ -455,6 +455,10 @@ fn write_atomic(path: &std::path::Path, raw: &str) {
 pub fn load_config() -> (AppConfig, Option<String>) {
     let path = config_path();
     if !path.exists() {
+        // First run (or a CLI command before the TUI has ever started).
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
         write_atomic(&path, DEFAULT_CONFIG);
         return (AppConfig::default(), None);
     }
@@ -498,9 +502,12 @@ pub fn load_config() -> (AppConfig, Option<String>) {
 /// Rewrite one `key` line in the config so user comments survive.
 fn set_key_in_file(key: &str, value: &str) {
     let path = config_path();
-    let Ok(raw) = fs::read_to_string(&path) else {
-        return;
-    };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    // Start from the defaults when nothing has been written yet, so CLI
+    // commands like `mfe discord on` work on a fresh machine.
+    let raw = fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_CONFIG.to_string());
     let mut replaced = false;
     let mut out = String::new();
     for line in raw.lines() {

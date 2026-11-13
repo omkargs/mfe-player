@@ -46,6 +46,57 @@ step() {
 have() { command -v "$1" >/dev/null 2>&1; }
 dry()  { printf '  %s~%s would %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 
+# Arrow-key chooser used on Windows shells: Docker (recommended) or the
+# experimental native install. Falls back silently when stdin is not a tty.
+choose_windows_mode() {
+    WINDOWS_MODE="native"
+    [ -t 0 ] || { warn "not interactive - continuing with the native install"; return 0; }
+    if ! have docker; then
+        warn "docker not found - continuing with the native install"
+        return 0
+    fi
+    printf '  %sHow do you want to run MFE?%s %s(↑/↓ + Enter)%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
+    local selected=0
+    local label0="Docker   - recommended: stable, runs in a container"
+    local label1="Native   - experimental: some features may not work"
+    local draw
+    draw() {
+        printf '  %s❯ %s%s\033[K\n' "$C_ACCENT" "$C_RESET" "$label0"
+        printf '    %s%s\033[K\n' "$C_DIM" "$label1"
+        printf '\033[2A'
+    }
+    draw
+    while true; do
+        local key
+        IFS= read -rsn1 key
+        case "$key" in
+            $'\x1b')
+                IFS= read -rsn2 key
+                case "$key" in
+                    '[A'|'D') selected=0 ;;
+                    '[B'|'C') selected=1 ;;
+                esac
+                ;;
+            '') break ;;
+            'j'|'[B') selected=1 ;;
+            'k'|'[A') selected=0 ;;
+            '1') selected=0; break ;;
+            '2') selected=1; break ;;
+            'q') printf '\n'; die "cancelled" ;;
+        esac
+        draw
+    done
+    printf '\033[2B\033[K\033[B\033[K'
+    if [ "$selected" = 0 ]; then
+        WINDOWS_MODE="docker"
+        ok "Docker selected - the stable way to run MFE on Windows"
+    else
+        WINDOWS_MODE="native"
+        warn "Native selected - remember: experimental, some features may not work"
+    fi
+}
+
+
 # ---------------------------------------------------------------------------
 # logo
 # ---------------------------------------------------------------------------
@@ -404,6 +455,29 @@ install_from_npm() {
     ok "installed with npm ($bin_dir)"
 }
 
+install_with_docker() {
+    step "Docker"
+    if [ "$DRY_RUN" = 1 ]; then
+        dry "clone the repo into $SOURCE_DIR and run docker compose"
+        return 0
+    fi
+    have git || { warn "git is required for the docker install"; return 1; }
+    say "fetching the compose files into $SOURCE_DIR"
+    mkdir -p "$(dirname "$SOURCE_DIR")"
+    if [ -d "$SOURCE_DIR/.git" ]; then
+        git -C "$SOURCE_DIR" fetch --depth 1 origin master >/dev/null 2>&1 &&
+            git -C "$SOURCE_DIR" reset --hard FETCH_HEAD >/dev/null 2>&1
+    else
+        git clone --depth 1 "https://github.com/$REPO.git" "$SOURCE_DIR" >/dev/null 2>&1
+    fi || { warn "could not fetch the repository"; return 1; }
+    say "building the image (a few minutes the first time)"
+    ( cd "$SOURCE_DIR" && docker compose build ) || { warn "docker compose build failed"; return 1; }
+    ok "image built and cached"
+    printf '\n  %srun it with:%s\n' "$C_BOLD" "$C_RESET"
+    printf '    %scd %s && docker compose run --rm mfe%s\n' "$C_ACCENT" "$SOURCE_DIR" "$C_RESET"
+    return 0
+}
+
 install_mfe() {
     step "mfe-player"
     local dir="${SCRIPT_DIR:-}"
@@ -569,6 +643,25 @@ if [ "$SETUP_ONLY" = 1 ]; then
     finish
     exit 0
 fi
+
+# Windows shells (Git Bash / MSYS): the native build is experimental, so warn
+# and let the user pick the Docker route with arrows.
+case "$OS" in
+    MINGW*|MSYS*|CYGWIN*)
+        step "Windows notice"
+        warn "Windows is EXPERIMENTAL — some features may not work yet."
+        say "audio, media keys and desktop integrations are best-effort."
+        say "the Docker build is the stable path on Windows."
+        choose_windows_mode
+        if [ "${WINDOWS_MODE:-native}" = "docker" ]; then
+            if install_with_docker; then
+                finish
+                exit 0
+            fi
+            die "docker install failed - fix docker, or re-run and choose Native"
+        fi
+        ;;
+esac
 
 install_mfe
 install_completions

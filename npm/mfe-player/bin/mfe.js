@@ -274,7 +274,48 @@ const NON_PLAY = new Set([
   "completions",
   "help",
   "version",
+  "play",
+  "pause",
+  "next",
+  "prev",
+  "mute",
+  "seek",
+  "volume",
+  "shuffle",
+  "repeat",
 ]);
+
+// The same block-art banner install.sh opens with. Only shown on the first
+// interactive launch of a playback command, so waybar/polybar JSON stays clean.
+const LOGO_ART = `  ███╗   ███╗███████╗███████╗
+  ████╗ ████║██╔════╝██╔════╝
+  ██╔████╔██║█████╗  █████╗
+  ██║╚██╔╝██║██╔══╝  ██╔══╝
+  ██║ ╚═╝ ██║██║     ███████╗
+  ╚═╝     ╚═╝╚═╝     ╚══════╝
+  ██████╗ ██╗      █████╗ ██╗   ██╗███████╗██████╗
+  ██╔══██╗██║     ██╔══██╗╚██╗ ██╔╝██╔════╝██╔══██╗
+  ██████╔╝██║     ██████╔╝ ╚████╔╝ █████╗  ██████╔╝
+  ██╔═══╝ ██║     ██╔══██║  ╚██╔╝  ██╔══╝  ██╔══██╗
+  ██║     ███████╗██║  ██║   ██║   ███████╗██║  ██║
+  ╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝`;
+
+function showSplash(args) {
+  if (!process.stdout.isTTY) return false;
+  const first = args[0] || "";
+  if (first.startsWith("-") || NON_PLAY.has(first)) return false;
+  const marker = setupMarker();
+  const firstRun = !fs.existsSync(marker);
+  if (!firstRun) return false;
+  console.log(LOGO_ART);
+  console.log("  a terminal music player · no account · no subscription\n");
+  if (process.platform === "win32") {
+    console.error("  ! Windows is EXPERIMENTAL - some features may not work yet.");
+    console.error("    audio, media keys and desktop integrations are best-effort.");
+    console.error("    the Docker build is the stable path: docker compose run --rm mfe\n");
+  }
+  return true;
+}
 
 function shouldSetup(args) {
   if (process.env.MFE_SKIP_SETUP) return false;
@@ -326,6 +367,9 @@ function setup(bin) {
   }
 }
 
+const argv = process.argv.slice(2);
+showSplash(argv);
+
 const bin = resolveBinary();
 if (!bin) {
   console.error(
@@ -336,11 +380,11 @@ if (!bin) {
   process.exit(1);
 }
 
-if (shouldSetup(process.argv.slice(2))) {
+if (shouldSetup(argv)) {
   setup(bin);
 }
 
-const result = spawnSync(bin, process.argv.slice(2), { stdio: "inherit" });
+const result = spawnSync(bin, argv, { stdio: "inherit" });
 if (result.error) {
   console.error(`mfe-player: ${result.error.message}`);
   process.exit(1);

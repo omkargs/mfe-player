@@ -3,12 +3,17 @@
 <img src="assets/banner.svg" alt="MFE Player — Music For Everyone" width="100%">
 
 <pre align="center">
+      __  __   ______   ______
+     |  \/  | |  ____| |  ____|
+     | |\/| | | |__    | |__
+     | |  | | |  __|   |  __|
+     |_|  |_| |_|      |_|
 
-      ___ _   _ ____  _   _  ___ 
-     / __| | | / ___|| | | |/ _ \
-     | |  | |_| \___ \| |_| | | | |
-     | |__|  _  | ___) |  _  | | |
-      \____|_| \____/|_| |_|\___|
+      _____   _          _      _   _   ______   ____
+     |  __ \ | |        / \    | | | | |  ____| |  _ \
+     | |__) | | |      / _ \   | | |_| | |__    | |_) |
+     |  ___/  | |____  / ___ \  |__   _| |  __|   |  _ <
+     |_|      |______| /_/   \_\    |_|   |_|      |_| \_\
 
 </pre>
 
@@ -22,7 +27,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-7ee787.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-f74c00.svg)](https://www.rust-lang.org)
 
-[The rant](#-the-rant) · [Features](#-what-you-actually-get) · [Install](#-install-it) · [Keys](#-hotkeys) · [Themes](#-themes) · [Plugins](#-plugins-are-just-python)
+[The rant](#-the-rant) · [Features](#-what-you-actually-get) · [Install](#-install-it) · [Docs](docs/KEYS.md) · [Daemon](docs/DAEMON.md) · [Config](docs/CONFIG.md)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/omkargs/mfe-player/master/install.sh | bash
@@ -214,234 +219,19 @@ Not in the official distro repos yet — the packaging files are the real thing,
 
 ---
 
-## ⌨️ Hotkeys
+## 📚 The rest of the manual
 
-Press `?` inside the app for the full, searchable map. The ones you'll actually use:
+Everything longer than a tweet lives in [docs/](docs/):
 
-| Key | Action |
+| Doc | What's in it |
 |---|---|
-| `/` · `Ctrl+F` | Search · fuzzy-filter the current view |
-| `Enter` | Play · open artist/album · open playlist |
-| `Space` | Play/pause (also resumes a restored queue) |
-| `n` / `b` | Next / previous track |
-| `←` / `→` · `Shift+←/→` | Seek −5s / +5s · −30s / +30s |
-| `+` / `-` · `m` | Volume · mute — click or drag the mini meter too |
-| `[` / `]` · `\` | Speed down/up · reset to 1× |
-| `s` · `r` | Shuffle · cycle repeat (off → all → one) |
-| `a` · `A` | Queue selected · queue everything in view |
-| `N` | Play selected next |
-| `v` / `V` | Mark one / mark all |
-| `f` or `F` | Favorite/unfavorite |
-| `P` | Add selection to playlist |
-| `J` / `K` | Reorder in queue or playlist |
-| `S` | Save queue as a playlist |
-| `Alt+K` · `Alt+U` | Clear upcoming · undo last removal |
-| `Alt+E` · `Alt+I` | Export · import M3U |
-| `d` · `5` | Download · downloads view |
-| `7` · `Ctrl+G` | Listening history · listening stats |
-| `8` · `R` | Local library · rescan folders |
-| `Y` | Copy now playing to the clipboard |
-| `Alt+F` · `Alt+R` | Smart fade cycle · replaygain cycle |
-| `Ctrl+E` | Edit the 10-band EQ |
-| `Ctrl+L` | Import song/playlist from a link |
-| `Ctrl+T` | Toggle radio autoplay |
-| `Ctrl+V` | Toggle cava spectrum |
-| `z` | Sleep timer (15–90 min or end of track, fades out) |
-| `E` · `Alt+N` | EQ presets · loudness normalisation |
-| `Alt+T` | Cycle themes (`wallpaper` samples your desktop) |
-| `Alt+W` | Transparent background |
-| `Alt+M` | Motion on/off — every animation follows cava's energy |
-| `Ctrl+B` | Detach and keep playing (closing the window does this automatically) |
-| `Ctrl+P` or `:` | Command palette — every action, fuzzy-searchable |
-| `q` | Quit and stop |
-
----
-
-## 🌙 The background daemon (yes, repeat keeps working)
-
-Most TUI players "detach" by leaving `mpv` playing one file and hoping you don't notice. When that song ends, the queue is dead.
-
-MFE doesn't do that. `Ctrl+B` starts a tiny headless copy of the player that owns the socket, advances tracks, honours repeat/shuffle/radio, keeps MPRIS alive and persists state. Close the terminal, lock the laptop, drop the SSH connection — the music is still yours.
-
-```bash
-Ctrl+B          # TUI exits, daemon takes over
-mfe status      # Bad (2012 Remaster) — Michael Jackson [background daemon, repeat all]
-mfe toggle      # pause/resume from a script or keybind
-mfe next        # advance the queue (prev, shuffle on|off, repeat off|all|one)
-mfe mute        # toggle mute
-mfe seek +10    # jump forward; negative values jump back
-mfe volume 65   # absolute level, or +5 / -5 / up / down
-mfe             # reattach the full UI right where playback is
-mfe stop        # kill the music (and the daemon)
-```
-
-Every one of those goes through a tiny command file (`daemon.control`) that
-the daemon drains on its next tick, so the queue, repeat/shuffle and taste
-profile stay in one place no matter which process pressed the button. When no
-daemon is running, `play`, `pause`, `toggle`, `mute`, `seek` and `volume` fall
-back to talking to mpv directly; queue commands (`next`, `prev`, `shuffle`,
-`repeat`) say so instead of silently doing nothing.
-
-That's also why `repeat one` and radio survive in the background instead of quietly dying after one track. Yes, that bug annoyed me enough to build a whole daemon about it.
-
----
-
-## 🧩 Status bars & scripts
-
-`mfe` speaks JSON, so it drops straight into waybar, polybar, tmux or a shell prompt.
-
-```bash
-mfe status --json
-```
-
-```json
-{"text":"▶ Get Lucky — Daft Punk","class":"playing","title":"Get Lucky","artist":"Daft Punk","position":73.2,"duration":248,"paused":false,"repeat":"all","shuffle":false,"mode":"daemon","connected":true}
-```
-
-Waybar module:
-
-```json
-"custom/mfe": {
-  "exec": "mfe status --json",
-  "return-type": "json",
-  "interval": 1,
-  "format": "{}",
-  "on-click": "mfe toggle",
-  "on-click-right": "mfe stop"
-}
-```
-
-One-liners:
-
-```bash
-mfe current                 # ▶ Get Lucky — Daft Punk
-mfe share                   # copy now playing to the clipboard
-mfe toggle                  # pause/resume
-mfe completions bash        # also: zsh, fish
-mfe doctor                  # why is the audio not playing?
-mfe cache                   # sizes + the cache limit
-mfe cache clean             # free the artwork cache
-mfe update                  # grab the latest release (--check to only look)
-```
-
----
-
-## 🎨 Themes
-
-`Alt+T` cycles live and writes the choice back to `config.toml` **without deleting your comments**.
-
-`mfe` · `gruvbox` · `nord` · `mono` · `matrix` · `rose` · `catppuccin` · `dracula` · `tokyo-night` · `solarized` · `amber` · `ocean`
-
-Set one permanently:
-
-```toml
-theme = "tokyo-night"
-```
-
-No theme fits? Copy `src/theme.rs`, add 13 colours, open a PR. It's genuinely that small. Code contributions that make the terminal look less like 1998 are extremely welcome.
-
-**Blending with your wallpaper.** Two separate problems, two switches:
-
-1. **Stop covering it.** `Alt+W` (or `transparent = true`) leaves the base background unpainted, so whatever transparency or blur your terminal already has — and therefore your wallpaper — shows through. Panels and popups stay solid, so text stays readable even over a busy photo.
-2. **Match its colours.** `theme = "wallpaper"` reads the wallpaper your compositor is actually using — swww, hyprpaper, GNOME, Plasma, macOS or Windows — and derives the panel and accent colours from it. Dark wallpaper, dark panels. Warm sunset, warm accent. Or point it at a specific file with `wallpaper = "/path/to/image.jpg"`, or run `mfe theme adopt` once.
-
-```bash
-mfe theme adopt          # sample the current wallpaper and save the choice
-mfe theme list           # every built-in theme, including `wallpaper`
-mfe theme                # what am I using right now?
-```
-
-Your terminal still does the actual blurring — MFE just stops painting over it. kitty, wezterm, alacritty, foot, ghostty and Konsole all support opacity. On a terminal without transparency, use the palette half: it still matches the colours.
-
-### The rest of the look
-
-- **Rounded borders** on every panel, popup and dialog — one border type, applied everywhere.
-- **Truecolor gradient wordmark** in the header and an eighth-block progress bar (`▏▎▍▌▋▊▉`) with a gradient fill and a smooth head, instead of a flat gauge.
-- **Solid chrome, transparent base.** `Alt+W` removes only the base background; lists, popups and the inspector keep their own panel colour, so text survives a busy photo.
-- **Wallpaper palette** keeps the wallpaper's hue in the dark panels, pulls a vivid accent from its dominant colour and rotates the hue for a second accent. Green, yellow and red stay semantic so status still means something.
-- **Graceful fallbacks.** No truecolor? The palettes approximate. No wallpaper detected? The palette half is skipped instead of guessing.
-
----
-
-## 🔌 Plugins are just Python
-
-Drop a `.py` file into `~/.config/mfe-player/plugins/`. It gets discovered, loaded and kept up to date on launch. Standard library only — no virtualenv, no build step, no dependency hell.
-
-The bundled ones:
-
-- **metadata** — iTunes Search API, MusicBrainz, Internet Archive, Radio Browser
-- **streaming** — YouTube (`yt-dlp`), SoundCloud (`yt-dlp`), Internet Archive, Radio Browser
-- **lyrics** — LRCLIB with a lyrics.ovh fallback
-
-If one provider rate-limits you, MFE fails over to the next plugin instead of showing you a spinner forever. Adding a new source is a JSON contract, not a framework.
-
-The trick, if you want to build one: your plugin prints JSON. That's it. `main.py search '<query>'` returns `{"artists":[],"albums":[],"tracks":[...]}`, and `main.py resolve '<track-json>'` returns `{"url":"...","extractor":"..."}`. If it works in a terminal, it works in MFE.
-
----
-
-## 🧱 How it works
-
-```text
-┌──────────────┐     events      ┌──────────────┐
-│   ratatui    │ ◀─────────────▶ │  app state   │
-│   TUI / daemon│                │ queue · radio│
-└──────┬───────┘                 └──────┬───────┘
-       │ stdin / keys                   │ JSON over Unix socket
-       ▼                                ▼
-┌──────────────┐                 ┌──────────────┐
-│ plugin worker│ ── metadata ──▶ │     mpv      │
-│ python3      │ ── stream URL ─▶│ audio engine │
-└──────────────┘                 └──────────────┘
-```
-
-- Rust for the UI, state machine and IPC.
-- `mpv` for actual audio: gapless, prefetch, filters, MPRIS-friendly.
-- Python plugins for anything that touches the internet, because providers change faster than compiled binaries.
-- One shared socket; a second TUI gets a private player instead of hijacking your music.
-
----
-
-## ⚙️ Config
-
-`~/.config/mfe-player/config.toml` — every key is optional.
-
-```toml
-theme = "mfe"             # or "wallpaper" to sample your desktop
-transparent = false       # Alt+W; let the terminal show what is behind it
-wallpaper = ""            # explicit image for theme = "wallpaper"; empty = detect
-seek_step = 5
-long_seek_step = 30
-volume_step = 5
-max_volume = 130          # ceiling for +/- and the clickable meter
-speed_step = 0.1          # [ and ] speed step
-prefetch = true
-radio = false
-mouse = true
-cava = true
-cava_position = "right"   # right | left
-cava_bars = 28
-normalize = false
-eq = "flat"               # flat | bass | vocal | night | loud
-audio_device = ""         # e.g. "alsa/hdmi:CARD=HDMI"
-fade_seconds = 0          # 2-4 = gentle crossfade feel, 0 = off
-replaygain = "off"        # off | track | album
-eq_gains = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-mpris = true
-library_paths = ["~/Music"]   # scanned on launch; press R in the library view to rescan
-listenbrainz_token = ""       # optional; empty = nothing ever leaves your machine
-```
-
-| Path | What lives there |
-|---|---|
-| `~/.config/mfe-player/config.toml` | settings |
-| `~/.config/mfe-player/state.json` | queue, playlists, favorites, position |
-| `~/.config/mfe-player/plugins/` | provider plugins |
-| `~/.cache/mfe-player/downloads/` | offline audio |
-| `~/.config/mfe-player/library.json` | local library index |
-| `~/.cache/mfe-player/artwork/` | downloaded and embedded cover cache |
-| `~/.config/mfe-player/mfe-player.m3u` | exported playlists |
-
-Want scrobbles without handing over a social graph? Paste a ListenBrainz user token into `listenbrainz_token` in the config. Plays are submitted from a background thread; if the token is empty, nothing leaves your machine.
+| [Keys](docs/KEYS.md) | every hotkey, the full map |
+| [Daemon](docs/DAEMON.md) | background playback and the CLI verbs that drive it |
+| [Scripting](docs/SCRIPTING.md) | waybar/polybar/tmux JSON, one-liners |
+| [Themes](docs/THEMES.md) | 14 built-ins, wallpaper palettes, transparency |
+| [Plugins](docs/PLUGINS.md) | the Python JSON contract, bundled providers |
+| [Architecture](docs/ARCHITECTURE.md) | how the pieces talk to each other |
+| [Config](docs/CONFIG.md) | every `config.toml` key and where files live |
 
 ---
 

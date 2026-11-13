@@ -3638,8 +3638,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect) {
     let start = lyrics.scroll.min(total.saturating_sub(height));
     let end = (start + height).min(total);
     let mut lines = Vec::new();
-    for index in start..end {
-        let lyric = &lyrics.lines[index];
+    for (index, lyric) in lyrics.lines.iter().enumerate().take(end).skip(start) {
         let is_current = current == Some(index);
         let synced = lyric.at.is_some();
         let time = lyric

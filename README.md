@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/omkargs/mfe-player/master/install.s
 
 ---
 
-## 😤 The rant
+## The reason why i build this : 
 
 I'm going to be honest with you: I built this because I got tired of being farmed.
 

@@ -1,15 +1,43 @@
-version: '3.8'
+# mfe-player in a container.
+#
+#   docker compose build
+#   docker compose run --rm mfe            # interactive TUI
+#   docker compose run --rm mfe doctor     # check the audio stack
+#   docker compose run --rm mfe --version
+#
+# Config, cache and the queue live in named volumes, so they survive
+# `docker compose run --rm` and work the same on Linux, macOS and Windows.
+#
+# Audio stays on the host. On Linux, uncomment the PipeWire/Pulse socket
+# mounts below (or use `network_mode: host`). Docker Desktop on macOS and
+# Windows has no host audio socket, so the container runs the UI, search,
+# playlists and the CLI but cannot open a speaker — use it there for the
+# reproducible environment and `doctor`, not for listening.
 
 services:
   mfe:
     build: .
     image: mfe-player:latest
-    container_name: mfe-player
     stdin_open: true
     tty: true
-    volumes:
-      - ~/.config/mfe:/root/.config/mfe
-      - ~/.local/share/mfe:/root/.local/share/mfe
+    init: true
     environment:
-      - DISPLAY=${DISPLAY}
-    command: ["mfe-player"]
+      - TERM
+      # Point mpv at the host audio server when a socket is mounted below.
+      - PULSE_SERVER=${PULSE_SERVER:-}
+      - PIPEWIRE_REMOTE=${PIPEWIRE_REMOTE:-}
+    volumes:
+      - mfe-config:/root/.config/mfe-player
+      - mfe-cache:/root/.cache/mfe-player
+      # Your music library, read-only. Replace the left side with a real path;
+      # an absolute path is the safest form on every platform.
+      # - /home/you/Music:/root/Music:ro
+      # Linux only: let mpv reach the host audio server.
+      # - /run/user/1000/pulse:/run/user/1000/pulse
+      # - /run/user/1000/pipewire-0:/run/user/1000/pipewire-0
+    # Linux only: simpler networking for discovery plugins + host audio.
+    # network_mode: host
+
+volumes:
+  mfe-config:
+  mfe-cache:

@@ -93,6 +93,58 @@ fn main() -> Result<()> {
             daemon::toggle_pause()?;
             return Ok(());
         }
+        Some("volume") => {
+            daemon::volume_command(raw_args.get(1).map(String::as_str))?;
+            return Ok(());
+        }
+        Some("play") => {
+            daemon::control("play")?;
+            return Ok(());
+        }
+        Some("pause") => {
+            daemon::control("pause")?;
+            return Ok(());
+        }
+        Some("next") => {
+            daemon::control("next")?;
+            return Ok(());
+        }
+        Some("prev") | Some("previous") => {
+            daemon::control("prev")?;
+            return Ok(());
+        }
+        Some("mute") => {
+            daemon::control("mute")?;
+            return Ok(());
+        }
+        Some("seek") => {
+            let spec = raw_args.get(1).map(String::as_str).unwrap_or("+5");
+            let seconds = match spec.parse::<f64>() {
+                Ok(value) if value.is_finite() => value,
+                _ => anyhow::bail!("seek expects seconds, e.g. `mfe seek +10` or `mfe seek -30`"),
+            };
+            daemon::control(&format!("seek {seconds}"))?;
+            return Ok(());
+        }
+        Some("shuffle") => {
+            let mode = match raw_args.get(1).map(String::as_str) {
+                Some("on") => "on",
+                Some("off") => "off",
+                _ => "toggle",
+            };
+            daemon::control(&format!("shuffle {mode}"))?;
+            return Ok(());
+        }
+        Some("repeat") => {
+            let mode = match raw_args.get(1).map(String::as_str) {
+                Some("off") => "off",
+                Some("all") => "all",
+                Some("one") => "one",
+                _ => "toggle",
+            };
+            daemon::control(&format!("repeat {mode}"))?;
+            return Ok(());
+        }
         Some("status") => {
             if raw_args.iter().any(|arg| arg == "--json") {
                 println!("{}", serde_json::to_string(&daemon::status_json())?);
@@ -439,7 +491,7 @@ fn completions(shell: &str) -> String {
     match shell {
         "fish" => {
             r#"# mfe-player fish completions
-complete -c mfe -f -a "status current share theme taste discord motion doctor cache update toggle stop completions" -d "MFE Player"
+complete -c mfe -f -a "status current share theme taste discord motion doctor cache update play pause toggle next prev mute volume seek shuffle repeat stop completions" -d "MFE Player"
 complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
 complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish powershell"
 complete -c mfe -n "__fish_seen_subcommand_from taste" -a "status explain reset like dislike" -d "Taste profile"
@@ -462,7 +514,16 @@ _mfe() {
     'doctor:check mpv, plugins, config and clipboard'
     'cache:show or clear the artwork cache'
     'update:update to the latest release'
+    'play:resume the background player'
+    'pause:pause the background player'
     'toggle:play/pause the background player'
+    'next:next track in the queue'
+    'prev:previous track in the queue'
+    'mute:toggle mute'
+    'volume:read or set the volume (N, +N, -N, up, down, mute)'
+    'seek:seek by seconds, e.g. +10 or -30'
+    'shuffle:shuffle on|off|toggle'
+    'repeat:repeat off|all|one|toggle'
     'stop:stop playback and the daemon'
     'completions:print shell completions'
   )
@@ -484,6 +545,12 @@ _mfe() {
         _values 'action' on off status client asset
       elif [[ $words[2] == motion ]]; then
         _values 'action' on off status
+      elif [[ $words[2] == shuffle ]]; then
+        _values 'mode' on off toggle
+      elif [[ $words[2] == repeat ]]; then
+        _values 'mode' off all one toggle
+      elif [[ $words[2] == seek ]]; then
+        _message 'seconds, e.g. +10 or -30'
       fi
       ;;
   esac
@@ -495,7 +562,7 @@ _mfe "$@"
             r#"# mfe-player PowerShell completions
 Register-ArgumentCompleter -Native -CommandName mfe,mfe-player -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
-    $commands = @('status','current','share','theme','taste','discord','motion','doctor','cache','update','toggle','stop','completions')
+    $commands = @('status','current','share','theme','taste','discord','motion','doctor','cache','update','toggle','volume','stop','completions')
     $words = $commandAst.CommandElements | ForEach-Object { $_.ToString() }
     if ($words.Count -le 2) {
         $commands | Where-Object { $_ -like "$wordToComplete*" } |
@@ -512,6 +579,15 @@ Register-ArgumentCompleter -Native -CommandName mfe,mfe-player -ScriptBlock {
     } elseif ($words[1] -eq 'taste') {
         @('status','explain','reset','like','dislike') | Where-Object { $_ -like "$wordToComplete*" } |
             ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    } elseif ($words[1] -eq 'shuffle') {
+        @('on','off','toggle') | Where-Object { $_ -like "$wordToComplete*" } |
+            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    } elseif ($words[1] -eq 'repeat') {
+        @('off','all','one','toggle') | Where-Object { $_ -like "$wordToComplete*" } |
+            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    } elseif ($words[1] -eq 'volume') {
+        @('up','down','mute') | Where-Object { $_ -like "$wordToComplete*" } |
+            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
     }
 }
 "#
@@ -524,7 +600,7 @@ _mfe_player() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "status current share theme taste discord motion doctor cache update toggle stop completions" -- "$cur") )
+    COMPREPLY=( $(compgen -W "status current share theme taste discord motion doctor cache update play pause toggle next prev mute volume seek shuffle repeat stop completions" -- "$cur") )
   elif [ "$prev" = "completions" ]; then
     COMPREPLY=( $(compgen -W "bash zsh fish powershell" -- "$cur") )
   elif [ "$prev" = "theme" ]; then
@@ -535,6 +611,12 @@ _mfe_player() {
     COMPREPLY=( $(compgen -W "on off status client asset" -- "$cur") )
   elif [ "$prev" = "motion" ]; then
     COMPREPLY=( $(compgen -W "on off status" -- "$cur") )
+  elif [ "$prev" = "shuffle" ]; then
+    COMPREPLY=( $(compgen -W "on off toggle" -- "$cur") )
+  elif [ "$prev" = "repeat" ]; then
+    COMPREPLY=( $(compgen -W "off all one toggle" -- "$cur") )
+  elif [ "$prev" = "volume" ]; then
+    COMPREPLY=( $(compgen -W "up down mute" -- "$cur") )
   elif [ "$prev" = "cache" ]; then
     COMPREPLY=( $(compgen -W "clean" -- "$cur") )
   elif [ "$prev" = "update" ]; then
@@ -564,12 +646,21 @@ fn cli_action() -> CliAction {
                mfe-player                 open the TUI\n\
                mfe-player daft punk       open the TUI with search results\n\
                mfe-player status          what is playing right now?\n\
-               mfe-player status --json   waybar/polybar/tmux friendly JSON
-               mfe-player theme           print the current theme
-               mfe-player theme list      every built-in theme
-               mfe-player theme adopt     derive a theme from your wallpaper
-               mfe-player doctor          check mpv, plugins, config, clipboard
-               mfe-player update          update to the latest release (--check)
+               mfe-player status --json   waybar/polybar/tmux friendly JSON\n\
+               mfe-player play|pause      resume or pause the current track\n\
+               mfe-player next|prev       move through the queue\n\
+               mfe-player toggle          play/pause whichever player is running\n\
+               mfe-player mute            toggle mute\n\
+               mfe-player seek ±N         jump N seconds (e.g. +10, -30)\n\
+               mfe-player shuffle on|off  shuffle mode\n\
+               mfe-player repeat MODE     repeat off, all or one\n\
+               mfe-player volume [N]      read the volume; set with 65, +5, -5, up, down, mute\n\
+               mfe-player stop            stop playback and the daemon\n\
+               mfe-player theme           print the current theme\n\
+               mfe-player theme list      every built-in theme\n\
+               mfe-player theme adopt     derive a theme from your wallpaper\n\
+               mfe-player doctor          check mpv, plugins, config, clipboard\n\
+               mfe-player update          update to the latest release (--check)\n\
                mfe-player cache [clean]   show or clear the artwork cache\n\
                mfe-player current         one-line now playing\n\
                mfe-player share           copy now playing to the clipboard\n\
@@ -580,8 +671,6 @@ fn cli_action() -> CliAction {
                mfe-player discord on|off  enable or disable presence\n\
                mfe-player discord client <id>   set the Discord application id\n\
                mfe-player motion          animation status (on|off)\n\
-               mfe-player toggle          play/pause the background player\n\
-               mfe-player stop            stop playback and the daemon\n\
                mfe-player completions bash|zsh|fish|powershell\n\n\
              First run installs default plugins into ~/.config/mfe-player/plugins.\n\
              Config: ~/.config/mfe-player/config.toml (themes, steps, cava, ...).\n\
@@ -633,9 +722,17 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse: bo
 
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) -> Result<()> {
     install_external_close_handlers();
+    // Commands left over from a previous session must not replay now.
+    let _ = std::fs::remove_file(config::daemon_control_path());
     let mut title = String::new();
     while !app.should_quit {
         app.tick();
+        // `mfe next`, `mfe pause`, ... land here while the TUI owns the
+        // player, so CLI control works whether the daemon or the UI is up.
+        let commands = daemon::drain_control();
+        if !commands.is_empty() {
+            app.apply_remote(&commands);
+        }
         if external_close_requested() {
             app.handoff_for_external_close();
             break;

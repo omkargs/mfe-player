@@ -96,7 +96,9 @@ impl PersistedState {
         match fs::read_to_string(&path) {
             Ok(raw) => match serde_json::from_str::<Self>(&raw) {
                 Ok(mut state) => {
-                    state.volume = state.volume.clamp(0.0, 130.0);
+                    // App::new clamps to config.max_volume once settings are
+                    // known; here we only reject nonsense values.
+                    state.volume = state.volume.clamp(0.0, 300.0);
                     if !(0.25..=4.0).contains(&state.speed) {
                         state.speed = 1.0;
                     }

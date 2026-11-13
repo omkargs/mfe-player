@@ -185,6 +185,8 @@ pub fn takeover() {
 pub fn run() -> Result<()> {
     config::ensure_dirs()?;
     let _ = fs::remove_file(config::daemon_stop_path());
+    // A command left over from a previous run must not be replayed now.
+    let _ = fs::remove_file(config::daemon_control_path());
     let _ = fs::write(config::daemon_pid_path(), std::process::id().to_string());
     write_heartbeat(std::process::id());
     #[cfg(unix)]
@@ -222,6 +224,10 @@ pub fn run() -> Result<()> {
             break;
         }
         app.tick();
+        let commands = drain_control();
+        if !commands.is_empty() {
+            app.apply_remote(&commands);
+        }
         if last_beat.elapsed() >= Duration::from_secs(1) {
             write_heartbeat(std::process::id());
             last_beat = Instant::now();
@@ -234,6 +240,7 @@ pub fn run() -> Result<()> {
     let _ = fs::remove_file(config::daemon_pid_path());
     let _ = fs::remove_file(config::daemon_heartbeat_path());
     let _ = fs::remove_file(config::daemon_stop_path());
+    let _ = fs::remove_file(config::daemon_control_path());
     Ok(())
 }
 
@@ -364,11 +371,119 @@ pub fn stop_everything() -> Result<()> {
     // (and the next launch's probe) think a player is still around.
     let _ = fs::remove_file(config::mpv_socket_path());
     let _ = fs::remove_file(config::session_lock_path());
+    let _ = fs::remove_file(config::daemon_control_path());
     Ok(())
 }
 
 pub fn toggle_pause() -> Result<()> {
-    mpv_command(json!(["cycle", "pause"]))
+    control("toggle")
+}
+
+/// True when either the headless daemon or an open TUI owns the player. Both
+/// drain the same command file, so `mfe next` works whichever one is up.
+pub fn player_alive() -> bool {
+    is_running() || session_owner_alive()
+}
+
+/// Append a command for whichever player process is running. Returns false
+/// when nobody is listening, so callers can fall back to talking to mpv.
+pub fn send_control(command: &str) -> bool {
+    if !player_alive() {
+        return false;
+    }
+    let path = config::daemon_control_path();
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| writeln!(file, "{command}"))
+        .is_ok()
+}
+
+/// Drain the command inbox on the player's tick. The file is emptied first so
+/// a command is applied once even if two `mfe` calls race each other.
+pub fn drain_control() -> Vec<String> {
+    let path = config::daemon_control_path();
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    if raw.trim().is_empty() {
+        return Vec::new();
+    }
+    let _ = fs::write(&path, "");
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Commands a plain mpv session can apply without the queue. Everything else
+/// (next/previous/shuffle/repeat) needs the daemon's bookkeeping.
+fn direct_command(command: &str) -> Option<serde_json::Value> {
+    let mut parts = command.split_whitespace();
+    let name = parts.next()?;
+    let arg = parts.next();
+    let number = || arg.and_then(|raw| raw.parse::<f64>().ok());
+    Some(match name {
+        "play" => json!(["set_property", "pause", false]),
+        "pause" => json!(["set_property", "pause", true]),
+        "toggle" => json!(["cycle", "pause"]),
+        "mute" => json!(["cycle", "mute"]),
+        "seek" => json!(["seek", number()?, "relative"]),
+        "volume" => json!(["set_property", "volume", number()?]),
+        _ => return None,
+    })
+}
+
+/// Send a command to the daemon, or directly to a foreground mpv session when
+/// the command does not depend on the queue.
+pub fn control(command: &str) -> Result<()> {
+    if send_control(command) {
+        return Ok(());
+    }
+    match direct_command(command) {
+        Some(command) => mpv_command(command),
+        None => anyhow::bail!(
+            "no player running — open mfe, or press Ctrl+B in it to hand playback to the daemon"
+        ),
+    }
+}
+
+/// `mfe volume [N | +N | -N | up | down | mute]`. Reads when no argument is
+/// given, so status bars can call it without extra plumbing. Values are
+/// clamped to the configured `max_volume`.
+pub fn volume_command(arg: Option<&str>) -> Result<()> {
+    let Some(volume) = mpv_property("volume").and_then(|value| value.as_f64()) else {
+        anyhow::bail!("no running player found (start mfe-player first)");
+    };
+    let current = volume;
+    let (config, _) = crate::config::load_config();
+    let max = config.max_volume;
+    let step = config.volume_step;
+    let Some(arg) = arg else {
+        println!("{current:.0}");
+        return Ok(());
+    };
+    let target = match arg.trim() {
+        "" => current,
+        "mute" => 0.0,
+        "up" => current + step,
+        "down" => current - step,
+        raw => match raw.parse::<f64>() {
+            Ok(value) if raw.starts_with('+') || raw.starts_with('-') => current + value,
+            Ok(value) => value,
+            Err(_) => anyhow::bail!("volume expects a number, +N, -N, up, down or mute"),
+        },
+    };
+    let target = target.clamp(0.0, max);
+    // Route through the daemon when it owns the player so its state (and the
+    // next fade) uses the new value instead of reverting it.
+    if !send_control(&format!("volume {target:.0}")) {
+        mpv_command(json!(["set_property", "volume", target]))?;
+    }
+    println!("{target:.0}");
+    Ok(())
 }
 
 pub fn status_line() -> String {
@@ -392,4 +507,27 @@ pub fn status_line() -> String {
         "stopped"
     };
     format!("{title}  [{mode}, repeat {}]", state.repeat)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_commands_cover_state_without_a_queue() {
+        assert!(direct_command("toggle").is_some());
+        assert!(direct_command("pause").is_some());
+        assert!(direct_command("play").is_some());
+        assert!(direct_command("mute").is_some());
+        assert!(direct_command("seek +10").is_some());
+        assert!(direct_command("seek -30.5").is_some());
+        assert!(direct_command("volume 65").is_some());
+    }
+
+    #[test]
+    fn queue_commands_require_the_player_process() {
+        for command in ["next", "prev", "shuffle on", "repeat one", "seek +x"] {
+            assert!(direct_command(command).is_none(), "{command}");
+        }
+    }
 }

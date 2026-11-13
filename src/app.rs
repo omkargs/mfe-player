@@ -199,6 +199,7 @@ pub enum HitAction {
     SwitchView(View),
     Select(View, usize),
     SeekBar,
+    VolumeBar,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -956,7 +957,7 @@ impl App {
             persisted.active_lyrics.as_deref(),
         );
 
-        let volume = persisted.volume.clamp(0.0, 130.0);
+        let volume = persisted.volume.clamp(0.0, config.max_volume);
         let (audio, audio_error, attached, private_audio) =
             match AudioEngine::connect_or_spawn(volume, &config.audio_device) {
                 Ok(engine) => {
@@ -1010,10 +1011,13 @@ impl App {
         let listenbrainz_token = config.listenbrainz_token.clone();
         let initial_view = match config.default_view.to_ascii_lowercase().as_str() {
             "queue" => View::Queue,
-            "favorites" => View::Favorites,
-            "playlists" => View::Playlists,
+            "favorites" | "likes" => View::Favorites,
+            "playlists" | "lists" => View::Playlists,
             "downloads" => View::Downloads,
             "plugins" => View::Plugins,
+            "library" => View::Library,
+            "history" => View::History,
+            "browse" => View::Browse,
             _ => View::Search,
         };
         let mut app = Self {
@@ -1393,8 +1397,8 @@ impl App {
             KeyCode::Char('+') | KeyCode::Char('=') => self.change_volume(self.config.volume_step),
             KeyCode::Char('-') | KeyCode::Char('_') => self.change_volume(-self.config.volume_step),
             KeyCode::Char('m') if !key.modifiers.contains(KeyModifiers::ALT) => self.toggle_mute(),
-            KeyCode::Char('[') => self.change_speed(-0.1),
-            KeyCode::Char(']') => self.change_speed(0.1),
+            KeyCode::Char('[') => self.change_speed(-self.config.speed_step),
+            KeyCode::Char(']') => self.change_speed(self.config.speed_step),
             KeyCode::Char('\\') => self.reset_speed(),
             KeyCode::Char('z') => self.open_sleep_timer(),
             KeyCode::Char('E') => self.cycle_eq(),
@@ -2417,7 +2421,7 @@ impl App {
             media::Command::Seek(delta) => self.seek(delta),
             media::Command::SetPosition(position) => self.seek_absolute(position),
             media::Command::SetVolume(volume) => {
-                self.volume = volume.clamp(0.0, 130.0);
+                self.volume = volume.clamp(0.0, self.config.max_volume);
                 if self.volume > 0.0 {
                     self.last_volume = self.volume;
                 }
@@ -3619,7 +3623,8 @@ impl App {
         match mouse.kind {
             MouseEventKind::ScrollDown => self.move_selection(1),
             MouseEventKind::ScrollUp => self.move_selection(-1),
-            MouseEventKind::Down(MouseButton::Left) => {
+            MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
+                let dragging = matches!(mouse.kind, MouseEventKind::Drag(_));
                 let Some(hit) = self
                     .hits
                     .iter()
@@ -3646,15 +3651,24 @@ impl App {
                             / f64::from(hit.area.width.max(1));
                         self.seek_absolute(ratio.clamp(0.0, 1.0) * duration);
                     }
+                    HitAction::VolumeBar => {
+                        let span = f64::from(hit.area.width.saturating_sub(1).max(1));
+                        let ratio = (f64::from(mouse.column.saturating_sub(hit.area.x)) / span)
+                            .clamp(0.0, 1.0);
+                        self.set_volume(ratio * self.config.max_volume);
+                    }
                     HitAction::Select(view, index) => {
-                        let double = self.last_click.as_ref().is_some_and(|(at, action)| {
-                            *action == hit.action && at.elapsed() < Duration::from_millis(450)
-                        });
+                        let double = !dragging
+                            && self.last_click.as_ref().is_some_and(|(at, action)| {
+                                *action == hit.action && at.elapsed() < Duration::from_millis(450)
+                            });
                         self.select_hit(view, index);
                         if double {
                             self.activate_selected();
                         }
-                        self.last_click = Some((Instant::now(), hit.action));
+                        if !dragging {
+                            self.last_click = Some((Instant::now(), hit.action));
+                        }
                     }
                 }
             }
@@ -4577,7 +4591,16 @@ impl App {
     }
 
     fn change_volume(&mut self, delta: f64) {
-        self.volume = (self.volume + delta).clamp(0.0, 130.0);
+        self.volume = (self.volume + delta).clamp(0.0, self.config.max_volume);
+        if self.volume > 0.0 {
+            self.last_volume = self.volume;
+        }
+        self.apply_volume();
+    }
+
+    /// Set the volume directly (used by the clickable meter in the player bar).
+    fn set_volume(&mut self, volume: f64) {
+        self.volume = volume.clamp(0.0, self.config.max_volume);
         if self.volume > 0.0 {
             self.last_volume = self.volume;
         }
@@ -4589,7 +4612,7 @@ impl App {
             self.last_volume = self.volume;
             self.volume = 0.0;
         } else {
-            self.volume = self.last_volume.max(5.0);
+            self.volume = self.last_volume.max(5.0).min(self.config.max_volume);
         }
         self.apply_volume();
     }
@@ -5818,6 +5841,92 @@ impl App {
         if let Some(audio) = self.audio.as_mut() {
             audio.release();
         }
+    }
+
+    /// Apply commands queued by the `mfe` CLI. The daemon calls this on its
+    /// tick, so the queue, taste profile and saved state stay authoritative
+    /// no matter which process pressed the button.
+    pub fn apply_remote(&mut self, commands: &[String]) {
+        for command in commands {
+            let mut parts = command.split_whitespace();
+            let Some(name) = parts.next() else {
+                continue;
+            };
+            let arg = parts.next();
+            match name {
+                "play" => self.set_paused(false),
+                "pause" => self.set_paused(true),
+                "toggle" => self.toggle_pause(),
+                "next" => self.next_track(false),
+                "prev" | "previous" => self.previous_track(),
+                "mute" => self.toggle_mute(),
+                "shuffle" => match arg {
+                    Some("on") => {
+                        self.shuffle = true;
+                        self.status = "shuffle on".to_string();
+                        self.mark_dirty();
+                    }
+                    Some("off") => {
+                        self.shuffle = false;
+                        self.status = "shuffle off".to_string();
+                        self.mark_dirty();
+                    }
+                    _ => self.toggle_shuffle(),
+                },
+                "repeat" => match arg {
+                    Some("off") => self.set_repeat(RepeatMode::Off),
+                    Some("all") => self.set_repeat(RepeatMode::All),
+                    Some("one") => self.set_repeat(RepeatMode::One),
+                    _ => self.cycle_repeat(),
+                },
+                "seek" => {
+                    if let Some(delta) = arg.and_then(|raw| raw.parse::<f64>().ok()) {
+                        self.seek(delta);
+                    }
+                }
+                "volume" => {
+                    if let Some(value) = arg.and_then(|raw| raw.parse::<f64>().ok()) {
+                        self.set_volume(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        let idle = self
+            .audio
+            .as_ref()
+            .map(|audio| audio.snapshot().idle)
+            .unwrap_or(false);
+        if paused {
+            if idle {
+                return;
+            }
+        } else if idle && self.resume_queue() {
+            return;
+        }
+        let Some(audio) = self.audio.as_ref() else {
+            self.flash("audio engine unavailable");
+            return;
+        };
+        if let Err(err) = audio.set_pause(paused) {
+            self.flash(format!("pause failed: {err}"));
+            return;
+        }
+        self.status = if paused {
+            "paused".to_string()
+        } else {
+            "playing".to_string()
+        };
+        self.mark_dirty();
+    }
+
+    fn set_repeat(&mut self, mode: RepeatMode) {
+        self.repeat = mode;
+        self.status = mode.label().to_string();
+        self.mark_dirty();
     }
 
     fn switch_view(&mut self, view: View) {

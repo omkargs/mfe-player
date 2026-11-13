@@ -185,6 +185,12 @@ pub fn daemon_stop_path() -> PathBuf {
     runtime_dir().join("daemon.stop")
 }
 
+/// Command inbox for the background daemon. `mfe next` / `mfe pause` / ... append
+/// one line here; the daemon drains it on its next tick and then empties it.
+pub fn daemon_control_path() -> PathBuf {
+    runtime_dir().join("daemon.control")
+}
+
 pub fn daemon_log_path() -> PathBuf {
     config_dir().join("daemon.log")
 }
@@ -220,6 +226,14 @@ fn default_volume_step() -> f64 {
     5.0
 }
 
+fn default_max_volume() -> f64 {
+    130.0
+}
+
+fn default_speed_step() -> f64 {
+    0.1
+}
+
 fn default_theme() -> String {
     "mfe".to_string()
 }
@@ -248,6 +262,11 @@ pub struct AppConfig {
     pub seek_step: f64,
     pub long_seek_step: f64,
     pub volume_step: f64,
+    /// Upper bound for the volume slider and the +/- keys. mpv can amplify
+    /// above 100%, so this is a taste decision, not a hardware limit.
+    pub max_volume: f64,
+    /// Playback-speed step for `[` / `]` (0.05–0.5).
+    pub speed_step: f64,
     pub default_view: String,
     pub prefetch: bool,
     pub radio: bool,
@@ -317,6 +336,8 @@ impl Default for AppConfig {
             seek_step: default_seek(),
             long_seek_step: default_long_seek(),
             volume_step: default_volume_step(),
+            max_volume: default_max_volume(),
+            speed_step: default_speed_step(),
             default_view: default_view(),
             prefetch: default_true(),
             radio: false,
@@ -367,8 +388,13 @@ theme = "mfe"
 seek_step = 5
 long_seek_step = 30
 volume_step = 5
+# Ceiling for the volume meter and +/- keys (mpv amplifies above 100%).
+max_volume = 130
+# Playback-speed step for [ and ] (0.05–0.5).
+speed_step = 0.1
 
-# View shown at startup: search | queue | favorites | playlists | downloads | plugins
+# View shown at startup: search | queue | favorites | playlists | downloads |
+# plugins | library | history | browse
 default_view = "search"
 
 # Resolve the next track while the current one plays (no silence between songs).
@@ -488,6 +514,8 @@ pub fn load_config() -> (AppConfig, Option<String>) {
                 config.seek_step = config.seek_step.clamp(1.0, 600.0);
                 config.long_seek_step = config.long_seek_step.clamp(1.0, 600.0);
                 config.volume_step = config.volume_step.clamp(1.0, 50.0);
+                config.max_volume = config.max_volume.clamp(20.0, 300.0);
+                config.speed_step = config.speed_step.clamp(0.05, 0.5);
                 config.cava_bars = config.cava_bars.clamp(4, 96);
                 config.fade_seconds = config.fade_seconds.clamp(0.0, 15.0);
                 config.replaygain = config.replaygain.to_ascii_lowercase();
@@ -579,5 +607,13 @@ mod tests {
     fn transparency_is_the_default() {
         assert!(AppConfig::default().transparent);
         assert!(!AppConfig::default().ambient_art);
+    }
+
+    #[test]
+    fn shipped_config_parses_with_the_tuning_knobs() {
+        let cfg: AppConfig = toml::from_str(DEFAULT_CONFIG).expect("shipped config parses");
+        assert_eq!(cfg.max_volume, 130.0);
+        assert_eq!(cfg.speed_step, 0.1);
+        assert_eq!(cfg.default_view, "search");
     }
 }

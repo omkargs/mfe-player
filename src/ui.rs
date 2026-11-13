@@ -76,28 +76,50 @@ fn beat_glow(base: Color, floor: f32, depth: f32) -> Color {
     )
 }
 
-/// A static left-to-right fade of the text colours: no travel, so the title
-/// stays calm and readable instead of shimmering in the corner of your eye.
+/// Brightness of a highlight passing over `base` (0..1) at `travel` (0..1).
+/// The band is narrow and soft, so it reads as light catching the surface
+/// rather than a colour cycling through it.
+fn highlight(base: f32, travel: f32, spread: f32, strength: f32) -> f32 {
+    let distance = (base - travel + 1.0) % 1.0;
+    let distance = distance.min(1.0 - distance);
+    (1.0 - distance / spread).max(0.0) * strength
+}
+
+/// How fast the light sweeps: calm at rest, quicker when the track is loud.
+fn sweep_speed(base: f32) -> f32 {
+    base + energy() * base * 1.6
+}
+
+/// A static left-to-right fade of the text colours, lifted a touch on the beat
+/// so the title breathes without any travelling shimmer.
 fn animated_gradient(text: &str, from: Color, to: Color, modifier: Modifier) -> Vec<Span<'static>> {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len().max(1) as f32;
+    let breathe = if motion() { 0.03 + bass() * 0.11 } else { 0.0 };
     chars
         .iter()
         .enumerate()
         .map(|(index, ch)| {
             let t = index as f32 / len;
+            let colour = mix(mix(from, to, t), th().fg, breathe);
             Span::styled(
                 ch.to_string(),
-                Style::default().fg(mix(from, to, t)).add_modifier(modifier),
+                Style::default().fg(colour).add_modifier(modifier),
             )
         })
         .collect()
 }
 
-/// A rule under the header fading from accent to the panel border, lifted by
-/// the music but never travelling.
+/// A rule under the header with a single soft band of light drifting across it.
+/// Same hue throughout; the movement is pure brightness.
 fn gradient_rule(width: usize) -> Line<'static> {
     let lift = 0.2 + energy() * 0.3;
+    let travel = if motion() {
+        (phase() as f32 * sweep_speed(0.0035)) % 1.0
+    } else {
+        0.0
+    };
+    let strength = if motion() { 0.1 + bass() * 0.2 } else { 0.0 };
     let spans: Vec<Span<'static>> = (0..width)
         .map(|index| {
             let base = index as f32 / width.max(1) as f32;
@@ -106,7 +128,14 @@ fn gradient_rule(width: usize) -> Line<'static> {
             } else {
                 mix(th().accent2, th().border, (base - 0.5) * 2.0)
             };
-            Span::styled("─", Style::default().fg(colour))
+            Span::styled(
+                "─",
+                Style::default().fg(glow(
+                    colour,
+                    th().fg,
+                    highlight(base, travel, 0.11, strength),
+                )),
+            )
         })
         .collect();
     Line::from(spans)
@@ -149,13 +178,18 @@ fn level_glyph(value: f32) -> &'static str {
     LEVELS[((value.clamp(0.0, 1.0) * 8.0).round() as usize).min(8)]
 }
 
-/// A compact 10-cell wave sampled from the real spectrum. Falls back to a
-/// smooth bass/mid/treble curve when cava is unavailable, so the meter still
-/// breathes with the music on platforms without cava.
-fn vibe_wave(paused: bool) -> String {
+/// A compact 10-cell wave sampled from the real spectrum. Each cell keeps its
+/// own brightness, so tall bass peaks glow brighter than quiet mids — the
+/// meter reads as light, not as a flat strip of one colour. Falls back to a
+/// smooth bass/mid/treble curve when cava is unavailable.
+fn vibe_wave(paused: bool) -> Vec<Span<'static>> {
     const CELLS: usize = 10;
+    let base = if paused { th().yellow } else { th().green };
     if paused || !motion() {
-        return "▁".repeat(CELLS);
+        let level = glow(base, th().dim, 0.55);
+        return (0..CELLS)
+            .map(|_| Span::styled("▁", Style::default().fg(level)))
+            .collect();
     }
     let raw = UI_WAVE.lock().map(|wave| wave.clone()).unwrap_or_default();
     let mut points = Vec::with_capacity(CELLS);
@@ -187,21 +221,35 @@ fn vibe_wave(paused: bool) -> String {
     let boost = 1.7 + energy() * 2.0;
     points
         .iter()
-        .map(|value| level_glyph((value * boost).min(1.0)))
+        .map(|raw| {
+            let value = (raw * boost).min(1.0);
+            // Quiet cells sit close to the accent, loud ones climb towards the
+            // foreground. Single hue, brightness only.
+            let colour = glow(base, th().fg, 0.1 + value * 0.65);
+            Span::styled(level_glyph(value), Style::default().fg(colour))
+        })
         .collect()
 }
 
 /// Four-band meter driven by the actual spectrum, not a looping animation.
 /// Silent or paused playback rests on a flat line.
-fn eq_bars(paused: bool) -> String {
+fn eq_bars(paused: bool) -> Vec<Span<'static>> {
+    let base = if paused { th().yellow } else { th().green };
     if paused || !motion() {
-        return "▁▁▁▁".to_string();
+        let level = glow(base, th().dim, 0.55);
+        return (0..4)
+            .map(|_| Span::styled("▁", Style::default().fg(level)))
+            .collect();
     }
     let scale = 1.4 + energy() * 2.2;
     let bands = [bass(), (bass() + mid()) * 0.5, mid(), treble()];
     bands
         .iter()
-        .map(|value| level_glyph((value * scale).min(1.0)))
+        .map(|raw| {
+            let value = (raw * scale).min(1.0);
+            let colour = glow(base, th().fg, 0.1 + value * 0.65);
+            Span::styled(level_glyph(value), Style::default().fg(colour))
+        })
         .collect()
 }
 
@@ -375,22 +423,22 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(beat_glow(th().accent, 0.2, 0.4)))
-        .title(Line::from(vec![
-            Span::styled(
+        .title(Line::from({
+            let mut spans = vec![Span::styled(
                 " now playing ",
                 Style::default()
                     .fg(th().accent)
                     .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(
-                    "{} ",
-                    eq_bars(app.now_playing.is_none() || app.audio_snapshot().paused)
-                ),
-                Style::default().fg(th().green),
-            ),
-            Span::styled("· Alt+V / Esc close ", Style::default().fg(th().dim)),
-        ]))
+            )];
+            spans.extend(eq_bars(
+                app.now_playing.is_none() || app.audio_snapshot().paused,
+            ));
+            spans.push(Span::styled(
+                " · Alt+V / Esc close ",
+                Style::default().fg(th().dim),
+            ));
+            spans
+        }))
         .style(Style::default().bg(theme::panel()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -634,12 +682,13 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         Modifier::BOLD,
     ));
     if playing {
-        logo_spans.push(Span::styled(
-            format!("  {} ", vibe_wave(paused)),
-            Style::default()
-                .fg(if paused { th().yellow } else { th().green })
-                .add_modifier(Modifier::BOLD),
-        ));
+        logo_spans.push(Span::raw("  "));
+        let mut wave = vibe_wave(paused);
+        for span in &mut wave {
+            span.style = span.style.add_modifier(Modifier::BOLD);
+        }
+        logo_spans.extend(wave);
+        logo_spans.push(Span::raw(" "));
     } else {
         logo_spans.push(Span::raw("  "));
     }
@@ -842,7 +891,11 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
         Style::default().fg(th().dim),
     )));
     lines.push(Line::from(Span::styled(
-        format!(" {:.0}% vol", app.audio_snapshot().volume.max(app.volume)),
+        if app.volume <= 0.0 {
+            " muted".to_string()
+        } else {
+            format!(" {:.0}% vol", app.audio_snapshot().volume.max(app.volume))
+        },
         Style::default().fg(th().dim),
     )));
     frame.render_widget(
@@ -916,13 +969,17 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(th().border))
-        .title(Span::styled(
-            format!(
-                " {} spectrum ",
-                eq_bars(app.now_playing.is_none() || app.audio_snapshot().paused)
-            ),
-            Style::default().fg(th().accent2),
-        ))
+        .title(Line::from({
+            let mut spans = vec![Span::styled(" ", Style::default().fg(th().accent2))];
+            spans.extend(eq_bars(
+                app.now_playing.is_none() || app.audio_snapshot().paused,
+            ));
+            spans.push(Span::styled(
+                " spectrum ",
+                Style::default().fg(th().accent2),
+            ));
+            spans
+        }))
         .style(Style::default().bg(theme::panel()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -2450,7 +2507,8 @@ fn mix(from: Color, to: Color, t: f32) -> Color {
     }
 }
 
-/// Eighth-block progress bar: smooth head, static accent fade, quiet remainder.
+/// Eighth-block progress bar: smooth head, accent fade, and one slow band of
+/// light travelling along the played portion. Same hue; brightness only.
 fn bar_spans(width: usize, ratio: f64) -> Vec<Span<'static>> {
     const PARTIAL: [&str; 9] = [" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
     let ratio = ratio.clamp(0.0, 1.0);
@@ -2458,13 +2516,26 @@ fn bar_spans(width: usize, ratio: f64) -> Vec<Span<'static>> {
     let full = cells.floor() as usize;
     let partial = ((cells - full as f64) * 8.0).round() as usize;
     let denominator = width.max(1) as f32;
+    let travel = if motion() {
+        (phase() as f32 * sweep_speed(0.006)) % 1.0
+    } else {
+        0.0
+    };
+    let fill = ratio as f32;
 
     (0..width)
         .map(|index| {
             let base = index as f32 / denominator;
             let colour = mix(th().accent, th().accent2, base);
             if index < full {
-                Span::styled("█", Style::default().fg(colour))
+                // The glint only rides over the filled part, so an empty bar
+                // never looks like it is buffering.
+                let glint = if motion() && fill > 0.02 {
+                    highlight(base / fill, travel, 0.16, 0.12 + energy() * 0.18)
+                } else {
+                    0.0
+                };
+                Span::styled("█", Style::default().fg(glow(colour, th().fg, glint)))
             } else if index == full && partial > 0 {
                 // The head brightens with the bass, so it pulses with the song.
                 Span::styled(
@@ -2479,6 +2550,27 @@ fn bar_spans(width: usize, ratio: f64) -> Vec<Span<'static>> {
             }
         })
         .collect()
+}
+
+/// A compact clickable volume meter: eight cells plus the live percentage.
+/// Returns the spans and the exact cell width so the hit region matches.
+fn volume_meter(volume: f64, max: f64) -> (Vec<Span<'static>>, u16) {
+    const CELLS: usize = 8;
+    let ratio = (volume / max.max(1.0)).clamp(0.0, 1.0);
+    let filled = (ratio * CELLS as f64).round() as usize;
+    let colour = if volume <= 0.0 {
+        th().faint
+    } else {
+        glow(th().accent, th().fg, 0.12 + ratio as f32 * 0.4)
+    };
+    let bar: String = (0..CELLS)
+        .map(|cell| if cell < filled { '▰' } else { '▱' })
+        .collect();
+    let spans = vec![
+        Span::styled(bar, Style::default().fg(colour)),
+        Span::styled(format!(" {volume:>3.0}%"), Style::default().fg(th().dim)),
+    ];
+    (spans, (CELLS + 5) as u16)
 }
 
 fn info_line(label: &str, value: String) -> Line<'static> {
@@ -2506,29 +2598,21 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             beat_glow(th().border, 0.14, 0.5)
         }))
-        .title(Line::from(vec![
-            Span::styled(" now playing ", Style::default().fg(th().dim)),
-            Span::styled(
-                if app.resolving {
-                    format!("{} resolving ", app.spinner_char())
-                } else if app.now_playing.is_some() {
-                    format!("{} ", eq_bars(snapshot.paused))
-                } else {
-                    "○ ".to_string()
-                },
-                Style::default().fg(if app.resolving {
-                    th().yellow
-                } else if app.now_playing.is_some() {
-                    if snapshot.paused {
-                        th().yellow
-                    } else {
-                        th().green
-                    }
-                } else {
-                    th().faint
-                }),
-            ),
-        ]))
+        .title(Line::from({
+            let mut spans = vec![Span::styled(" now playing ", Style::default().fg(th().dim))];
+            if app.resolving {
+                spans.push(Span::styled(
+                    format!("{} resolving ", app.spinner_char()),
+                    Style::default().fg(th().yellow),
+                ));
+            } else if app.now_playing.is_some() {
+                spans.extend(eq_bars(snapshot.paused));
+                spans.push(Span::styled(" ", Style::default().fg(th().dim)));
+            } else {
+                spans.push(Span::styled("○ ", Style::default().fg(th().faint)));
+            }
+            spans
+        }))
         .style(Style::default().bg(theme::panel2()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -2607,28 +2691,40 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
         0.0
     };
     let time_label = timeline_label(snapshot.position, duration);
+    let volume_now = if snapshot.volume > 0.0 {
+        snapshot.volume
+    } else {
+        app.volume
+    };
+    // Narrow terminals have no room for the right-hand chips, so the volume
+    // rides along after the clock instead of disappearing entirely.
+    let volume_suffix = if wide {
+        String::new()
+    } else {
+        format!("  {volume_now:.0}%")
+    };
     let bar_width = (gauge_area[0].width as usize)
-        .saturating_sub(time_label.chars().count() + 1)
+        .saturating_sub(time_label.chars().count() + 1 + volume_suffix.chars().count())
         .max(1);
     let mut progress = Line::from(bar_spans(bar_width, ratio));
     progress.spans.push(Span::styled(
         time_label,
         Style::default().fg(th().dim).bg(theme::panel()),
     ));
+    if !volume_suffix.is_empty() {
+        progress.spans.push(Span::styled(
+            volume_suffix,
+            Style::default().fg(th().dim).bg(theme::panel()),
+        ));
+    }
     frame.render_widget(
         Paragraph::new(progress).style(Style::default().bg(theme::panel())),
         gauge_area[0],
     );
     app.record_hits(gauge_area[0], 0, vec![(0, HitAction::SeekBar)]);
 
-    let volume_label = if app.volume <= 0.0 {
-        "muted".to_string()
-    } else {
-        format!("vol {:.0}%", app.audio_snapshot().volume.max(app.volume))
-    };
     let mut mode = format!(
-        "{}  {}  {}{}",
-        volume_label,
+        "{}  {}{}",
         if app.shuffle {
             "shuffle"
         } else {
@@ -2656,9 +2752,26 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
         mode.push_str(&format!("  {sleep}"));
     }
     if wide {
+        let chips =
+            Layout::horizontal([Constraint::Length(13), Constraint::Min(6)]).split(gauge_area[1]);
+        let (meter, meter_width) = volume_meter(volume_now, app.config.max_volume);
+        frame.render_widget(
+            Paragraph::new(Line::from(meter)).style(Style::default().bg(theme::panel2())),
+            chips[0],
+        );
+        app.record_hits(
+            Rect {
+                x: chips[0].x,
+                y: chips[0].y,
+                width: meter_width.min(chips[0].width),
+                height: 1,
+            },
+            0,
+            vec![(0, HitAction::VolumeBar)],
+        );
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                truncate(&mode, gauge_area[1].width as usize),
+                truncate(&mode, chips[1].width as usize),
                 Style::default().fg(if snapshot.paused {
                     th().yellow
                 } else {
@@ -2667,7 +2780,7 @@ fn draw_player(frame: &mut Frame, app: &mut App, area: Rect) {
             )))
             .alignment(Alignment::Right)
             .style(Style::default().bg(theme::panel2())),
-            gauge_area[1],
+            chips[1],
         );
     }
 }
@@ -2780,7 +2893,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_overlay(frame: &mut Frame, app: &mut App, area: Rect) {
     match app.overlay.as_ref() {
-        Some(Overlay::Help) => draw_help(frame, area),
+        Some(Overlay::Help) => draw_help(frame, app, area),
         Some(Overlay::CommandPalette { query, selected }) => {
             draw_palette(frame, query, *selected, area)
         }
@@ -2809,7 +2922,10 @@ fn draw_overlay(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn draw_help(frame: &mut Frame, area: Rect) {
+fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
+    let seek = app.config.seek_step;
+    let long_seek = app.config.long_seek_step;
+    let volume_step = app.config.volume_step;
     let popup = centered(area, 78, 90);
     frame.render_widget(Clear, popup);
     let block = Block::default()
@@ -2858,9 +2974,18 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         key("Space", "play / pause (starts a restored queue)"),
         key("n / b", "next / previous track"),
         key("Ctrl+← / →", "previous / next track"),
-        key("← / →", "seek -5s / +5s"),
-        key("Shift+← / →", "seek -30s / +30s"),
-        key("+ / - · m", "volume up / down · mute"),
+        key(
+            "← / →",
+            &format!("seek -{seek:.0}s / +{seek:.0}s (drag the bar)"),
+        ),
+        key(
+            "Shift+← / →",
+            &format!("seek -{long_seek:.0}s / +{long_seek:.0}s"),
+        ),
+        key(
+            "+ / - · m",
+            &format!("volume ±{volume_step:.0}% · mute (click/drag the meter)"),
+        ),
         key("[ / ] · \\", "speed down / up · reset to 1×"),
         key("s · r", "shuffle · cycle repeat"),
         key("z", "sleep timer (15–90 min or end of track, fades out)"),

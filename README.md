@@ -153,6 +153,25 @@ ln -sf ~/.local/bin/mfe-player ~/.local/bin/mfe
 
 You need **Rust 1.85+**, **mpv**, **yt-dlp** and **python3** for the source build.
 
+### Docker
+
+```bash
+docker compose build
+docker compose run --rm mfe           # open the TUI
+docker compose run --rm mfe doctor    # verify mpv / yt-dlp / python inside the image
+```
+
+The image bundles mpv, yt-dlp, python3, ffmpeg and cava, and runs the same Linux
+binary on Linux, macOS and Windows through Docker Desktop. Config, cache and
+the queue live in named volumes, so they survive `docker compose run --rm`;
+the commented bind mount in `docker-compose.yml` points the container at your
+music folder.
+
+Audio is the one thing a container cannot fake. On Linux, mount the Pulse or
+PipeWire socket (see the commented lines) to hear it; on macOS and Windows,
+Docker Desktop has no host audio socket, so use the container for the UI,
+search, playlists, `doctor` and reproducible builds rather than for listening.
+
 ### After it is installed
 
 ```bash
@@ -160,6 +179,9 @@ mfe                     # open the TUI
 mfe daft punk           # open with search results waiting
 mfe status              # what's playing?
 mfe toggle              # play/pause the background player
+mfe next                # next track (prev, mute, seek +10, shuffle, repeat)
+mfe volume              # print the current volume
+mfe volume 65           # set it (also +5, -5, up, down, mute)
 mfe stop                # stop playback and the daemon
 mfe doctor              # why is the audio not playing?
 mfe theme adopt         # derive the UI colours from your wallpaper
@@ -187,7 +209,7 @@ Press `?` inside the app for the full, searchable map. The ones you'll actually 
 | `Space` | Play/pause (also resumes a restored queue) |
 | `n` / `b` | Next / previous track |
 | `←` / `→` · `Shift+←/→` | Seek −5s / +5s · −30s / +30s |
-| `+` / `-` · `m` | Volume · mute |
+| `+` / `-` · `m` | Volume · mute — click or drag the mini meter too |
 | `[` / `]` · `\` | Speed down/up · reset to 1× |
 | `s` · `r` | Shuffle · cycle repeat (off → all → one) |
 | `a` · `A` | Queue selected · queue everything in view |
@@ -229,9 +251,20 @@ MFE doesn't do that. `Ctrl+B` starts a tiny headless copy of the player that own
 Ctrl+B          # TUI exits, daemon takes over
 mfe status      # Bad (2012 Remaster) — Michael Jackson [background daemon, repeat all]
 mfe toggle      # pause/resume from a script or keybind
+mfe next        # advance the queue (prev, shuffle on|off, repeat off|all|one)
+mfe mute        # toggle mute
+mfe seek +10    # jump forward; negative values jump back
+mfe volume 65   # absolute level, or +5 / -5 / up / down
 mfe             # reattach the full UI right where playback is
 mfe stop        # kill the music (and the daemon)
 ```
+
+Every one of those goes through a tiny command file (`daemon.control`) that
+the daemon drains on its next tick, so the queue, repeat/shuffle and taste
+profile stay in one place no matter which process pressed the button. When no
+daemon is running, `play`, `pause`, `toggle`, `mute`, `seek` and `volume` fall
+back to talking to mpv directly; queue commands (`next`, `prev`, `shuffle`,
+`repeat`) say so instead of silently doing nothing.
 
 That's also why `repeat one` and radio survive in the background instead of quietly dying after one track. Yes, that bug annoyed me enough to build a whole daemon about it.
 
@@ -363,6 +396,8 @@ wallpaper = ""            # explicit image for theme = "wallpaper"; empty = dete
 seek_step = 5
 long_seek_step = 30
 volume_step = 5
+max_volume = 130          # ceiling for +/- and the clickable meter
+speed_step = 0.1          # [ and ] speed step
 prefetch = true
 radio = false
 mouse = true

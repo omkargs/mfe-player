@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Clickable volume meter** in the player bar. Click or drag to set the level;
+  it brightens with loudness instead of changing hue.
+- **`max_volume` and `speed_step` config keys.** Both were hardcoded before;
+  `max_volume` now applies to the keys, the meter, media keys, restored state
+  and `mfe volume`.
+- **`mfe volume [N | +N | -N | up | down | mute]`** for scripts and status bars;
+  prints the value when given no argument.
+- **CLI control for the background daemon:** `mfe play`, `pause`, `toggle`,
+  `next`, `prev`, `mute`, `seek`, `shuffle` and `repeat` now drive the running
+  daemon through a small command file, so the queue and the taste profile stay
+  authoritative. Stateless verbs fall back to mpv directly when no daemon is
+  running.
+- **Docker.** A multi-stage `Dockerfile` and `docker-compose.yml` with mpv,
+  yt-dlp, python3, ffmpeg and cava bundled, config/cache mounted, usable from
+  Linux, macOS and Windows through Docker Desktop.
+- `default_view` now accepts `library`, `history`, `browse`, plus the `likes`
+  and `lists` aliases.
+
+### Changed
+
+- **Animations: one hue, brightness only.** The header rule and the played
+  portion of the progress bar carry a single slow band of light; the spectrum
+  and EQ meters give each cell its own brightness; titles breathe gently with
+  the bass. No more rainbow sweeps or per-track hue jumps.
+- Mouse: dragging now continues seeking and volume changes instead of dropping
+  the gesture, and a drag never counts as a double-click.
+- The help overlay reads the configured seek, volume and speed steps instead of
+  hardcoded numbers.
+- Narrow terminals show the volume after the clock instead of hiding it.
+
 ## 0.3.0 — 2026-11-12
 
 Cross-platform, taste-aware and a lot prettier.

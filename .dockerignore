@@ -7,6 +7,5 @@ install.sh
 flake.nix
 pyproject.toml
 packaging
-plugins
 docs
 npm

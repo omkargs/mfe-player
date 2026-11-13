@@ -2,7 +2,7 @@
 
 <img src="assets/banner.svg" alt="MFE Player — Music For Everyone" width="100%">
 
-<img src="docs/demo.gif" alt="MFE Player in action — search, queue, spectrum, lyrics, detach to daemon" width="100%">
+<img src="docs/demo.gif?v=2" alt="MFE Player in action — search, queue, spectrum, lyrics, detach to daemon" width="100%">
 
 ### Music For Everyone.
 

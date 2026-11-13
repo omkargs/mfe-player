@@ -153,7 +153,7 @@ fn user_name() -> String {
 pub fn mpv_socket_path() -> PathBuf {
     #[cfg(windows)]
     {
-        return PathBuf::from(format!(r"\\.\pipe\mfe-player-{}", user_name()));
+        PathBuf::from(format!(r"\\.\pipe\mfe-player-{}", user_name()))
     }
     #[cfg(not(windows))]
     {
@@ -198,7 +198,7 @@ pub fn daemon_log_path() -> PathBuf {
 pub fn private_mpv_socket_path(pid: u32) -> PathBuf {
     #[cfg(windows)]
     {
-        return PathBuf::from(format!(r"\\.\pipe\mfe-player-{}-{pid}", user_name()));
+        PathBuf::from(format!(r"\\.\pipe\mfe-player-{}-{pid}", user_name()))
     }
     #[cfg(not(windows))]
     {

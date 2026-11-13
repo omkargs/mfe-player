@@ -18,6 +18,8 @@
 curl -fsSL https://raw.githubusercontent.com/omkargs/mfe-player/master/install.sh | bash
 ```
 
+**Platforms:** Linux is the tested, everything-works target · macOS builds in CI and is solid · **Windows is experimental** — the native build exists but nobody has certified it on real hardware, so on Windows the reliable path is Docker (`docker compose run --rm mfe`).
+
 </div>
 
 ---

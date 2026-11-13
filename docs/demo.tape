@@ -19,9 +19,9 @@ Sleep 500ms
 Type "get lucky"
 Sleep 2s
 Enter
-Sleep 6s
+Sleep 10s
 # let the spectrum dance for a bit
-Sleep 4s
+Sleep 5s
 Alt+v
 Sleep 4s
 Alt+t

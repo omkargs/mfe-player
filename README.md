@@ -2,6 +2,16 @@
 
 <img src="assets/banner.svg" alt="MFE Player — Music For Everyone" width="100%">
 
+<pre align="center">
+
+      ___ _   _ ____  _   _  ___ 
+     / __| | | / ___|| | | |/ _ \
+     | |  | |_| \___ \| |_| | | | |
+     | |__|  _  | ___) |  _  | | |
+      \____|_| |_|\____/|_| |_|\_|___
+
+</pre>
+
 ### Music For Everyone.
 
 **A terminal music player that streams, queues, downloads and visualises — with no subscription, no account, and no Electron tab eating your RAM.**
@@ -12,7 +22,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-7ee787.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-f74c00.svg)](https://www.rust-lang.org)
 
-[The rant](#-the-rant) · [Features](#-what-you-actually-get) · [Install](#-install-it) · [Keys](#-hotkeys) · [Themes](#-themes) · [Plugins](#-plugins-are-just-python) · [Roadmap](#-roadmap)
+[The rant](#-the-rant) · [Features](#-what-you-actually-get) · [Install](#-install-it) · [Keys](#-hotkeys) · [Themes](#-themes) · [Plugins](#-plugins-are-just-python)
 
 </div>
 
@@ -429,122 +439,10 @@ Want scrobbles without handing over a social graph? Paste a ListenBrainz user to
 
 ---
 
-## 🗺 Roadmap
+## 📄 License
 
-Shipped: search, playlists, queue, favourites, lyrics, radio, prefetch, downloads, MPRIS, cava, EQ, normalisation, sleep timer, background daemon, 14 themes, speed, smart fade, ReplayGain, ListenBrainz, Internet Archive, Radio Browser, local library, album art, history, stats, sharing, CLI JSON, transparent background, wallpaper palettes, rounded/gradient UI, macOS + Windows transport, taste autoplay, Discord Rich Presence, `mfe doctor`/`cache`/`update`, npm + PyPI + crates packaging.
-
-The rest is a real plan, roughly in build order.
-
-### Phase 1 — make it look like it belongs on your desktop
-- [x] **Transparent background.** `Alt+W` / `transparent = true` stops painting the base background, so the terminal's own opacity/blur shows your wallpaper through the app.
-- [x] **Wallpaper-aware theme.** `theme = "wallpaper"` / `mfe theme adopt` samples the current wallpaper and derives the panel/accent colours from it.
-- [ ] **Album-art ambient tint.** Accent colour shifts to the dominant colour of the current cover. Opt-in.
-- [ ] **ANSI-native theme.** `theme = "auto"` uses your terminal's own 16 colours, so it matches whichever theme you already run.
-- [x] Rounded borders, animated gradient logo and a smooth sub-cell progress bar.
-- [x] Nerd Font/ASCII icon mode (`icons = "auto" | "nerd" | "ascii"`).
-- [x] Full-screen now-playing view with big art and karaoke lyrics.
-- [x] Animated spectrum peaks, marquee titles, pulsing player frame and status chips.
-
-### Phase 2 — stop it breaking outside my laptop
-- [x] macOS: `/proc` replaced with `kill(pid, 0)`, native cache paths, CI build.
-- [x] Windows: named-pipe mpv transport (`src/ipc.rs`), `CREATE_NO_WINDOW` spawning, `clip` clipboard, Python plugin launch, heartbeat-based daemon control and a CI build.
-- [x] CI matrix for Linux/macOS/Windows so "works on my machine" stops being the test plan.
-- [ ] Platform media controls: SMTC on Windows, Now Playing on macOS (MPRIS is Linux-only).
-
-### Phase 3 — installable, and able to diagnose itself
-- [x] `mfe doctor` — checks mpv, yt-dlp, python3, socket, config, plugins, clipboard and wallpaper, then prints the exact fix.
-- [x] `mfe cache clean` plus `mfe cache` for a size readout.
-- [x] `install.sh` (animated, installs deps, runs doctor), AUR `PKGBUILD`, Nix flake, Homebrew formula template and a systemd unit.
-- [x] npm/bun (`optionalDependencies`, including Windows ARM64), pip/pipx/uv wheels via maturin, crates.io, PowerShell installer, all fed by one release workflow with checksums and `latest.json`.
-- [x] `mfe update` (self-replaces from the release tarball; `--check` for scripts).
-- [x] LRU eviction for the artwork cache (128 MiB, oldest covers go first).
-- [ ] A `vhs` demo GIF for this README, because a wall of text is not a demo.
-
-### Phase 4 — social, on your terms
-- [ ] Last.fm scrobbling plugin (MD5 signature, no OAuth dance).
-- [x] Discord Rich Presence (local IPC, opt-in, no bot token).
-- [x] Opt-in desktop notifications on track change.
-- [ ] Scrobble backfill from local history.
-
-### Phase 5 — library smarts
-- [ ] Smart playlists: recently added, never played, most played, on repeat.
-- [ ] Bulk download an album or playlist.
-- [ ] Terminal title sync: `▶ Track — Artist`, restored on exit.
-- [ ] Per-track resume bookmarks for long mixes and podcasts.
-- [ ] "Listening wrapped" generated from history.
-- [ ] Library watch mode and duplicate detection.
-
-Mulling but not committing: an MPD shim so `mpc`/`ncmpcpp` can drive MFE, a compact `mfe now` pane for tmux/waybar, shareable theme files (`mfe theme export/import`), podcast chapter support, and tag editing via `lofty`.
-
-PRs for any unchecked box are welcome. So are issues that start with "this broke at 3 a.m." — those are usually the real ones. And if you're here to tell me a desktop app would be nicer: no it wouldn't, and also I'm broke.
-
-<details>
-<summary><strong>💡 The idea backlog (wants, not promises)</strong></summary>
-
-### Blending with the desktop
-- **Follow the wallpaper, not a copy.** Re-derive the palette when the compositor's wallpaper actually changes, instead of sampling once at startup.
-- **Light/dark autopilot.** Sample the wallpaper's brightness and flip to a light theme when the desktop is bright.
-- **Fake depth without alpha.** A subtle vertical truecolor gradient on the background, derived from the wallpaper, for terminals where opacity isn't an option.
-- **Contrast guard.** When transparency is on and the wallpaper is busy, darken panels until the text is still readable — no unreadable grey-on-photo.
-- **Follow the focused monitor.** On multi-head setups, sample the wallpaper of the display the terminal is actually on.
-- **One palette, two sources.** Prefer album-cover colour while a track plays, wallpaper colour when idle.
-
-### Look and feel
-- **Rounded borders, accent rails, gradient logo** — the cheap stuff that makes it not look like 1999.
-- **Sub-cell progress bar** (`▏▎▍▌▋▊▉`) with a separate shade for the prefetched buffer.
-- **Scrollbars** in long lists, because "where am I" should not be a guess.
-- **VU meter** next to the volume readout.
-- **Cava styles**: bars, mirrored, dots, waveform, and a "nuclear" curve.
-- **ASCII mode** for real TTYs and screen readers; Nerd Font mode for people who like glyphs.
-- **Density setting**: comfortable vs compact rows.
-- **Toast stack** instead of one message eating the next.
-- **Animated selection** that slides instead of teleporting.
-- **Theme preview grid** instead of blind-cycling twelve names.
-- **Clickable OSC 8 links** in the inspector (open the track on YouTube/archive.org).
-- **Terminal title sync**: `▶ Track — Artist`, restored on exit.
-- **`mfe screenshot`**: dump the current view as ANSI or SVG — great for issues and READMEs.
-
-### Music and library
-- **Real crossfade** using a second mpv instance, instead of the volume ramp.
-- **ReplayGain scanning** for local files (`rsgain`/`ffmpeg ebur128`) so untagged albums stop shouting.
-- **Podcast RSS** subscriptions with per-episode resume and speed presets.
-- **Audiobook mode**: bookmark per file, skip silence, chapter list.
-- **Chapters** for long mixes and DJ sets.
-- **Lyrics karaoke mode** with a timing offset nudge (`[` / `]`).
-- **A-B repeat** for practice loops.
-- **Smart playlists** as saved rules, not just fixed lists.
-- **Duplicate finder** and a dry-run library organizer.
-- **Tag editor** via `lofty` (artist/album/title/cover).
-- **Library report**: formats, bitrates, missing tags, biggest files.
-- **Import Last.fm history** into local stats so the graphs aren't empty.
-- **Offline scrobble queue** with retry when the network comes back.
-
-### Power-user / ecosystem
-- **`mfe search "..." --json` and `mfe play <url|query>`** so the player is scriptable.
-- **`mfe plugin new <name>`** scaffolding plus `mfe plugin test` to validate the JSON contract.
-- **Local HTTP remote** with a token + QR code, so a phone can pause/queue without SSH.
-- **Systemd user service installer** for the daemon.
-- **MPD shim** so `mpc` and `ncmpcpp` can drive MFE.
-- **`mfe now`** compact pane for tmux/waybar.
-- **Stream Deck / rofi / dmenu** recipes in the docs.
-- **Man page** generated from the CLI, not hand-written.
-
-### Platform and distribution
-- **Named-pipe IPC + platform media controls** (SMTC on Windows, Now Playing on macOS) behind one trait.
-- **ARM64 and musl static releases** — Raspberry Pi deserves a music player.
-- **Flatpak / AppImage / AUR / Nix / Homebrew / Scoop**.
-- **CI matrix** that actually compiles all three OSes.
-- **`mfe doctor`** that prints the exact fix, not just a red X.
-- **`mfe update`** that checks GitHub releases.
-- **Landing page** with a real demo GIF and one-line installs per distro.
-
-### Social (without the social graph)
-- **Last.fm** scrobbling and richer Discord art (source icons, listen-along links).
-- **Now-playing image card**: render a small PNG with cover, title and source to paste anywhere.
-- **Weekly digest / "listening wrapped"** generated from local history.
-- **Desktop notifications** with cover art on track change (basic notifications already ship).
-
-</details>
+MIT. Do what you want with it — the license text is in [LICENSE](LICENSE). No
+pressure either way, honestly.
 
 ---
 

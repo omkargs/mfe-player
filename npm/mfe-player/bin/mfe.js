@@ -191,18 +191,31 @@ function downloadedBinary() {
   const name = `mfe-player-${triple}.${ext}`;
   const archive = path.join(cacheDir(), "downloads", name);
   let meta = loadLatest()?.targets?.[triple];
+  let manifestMissing = false;
   if (!meta) {
     // Fetch the manifest once so the fallback download can be verified.
     const manifest = path.join(cacheDir(), "latest.json");
     if (download(`${RELEASE_BASE}/latest.json`, manifest)) {
       meta = loadLatest()?.targets?.[triple];
+    } else {
+      manifestMissing = true;
     }
   }
 
   console.error(`mfe-player: no bundled binary for ${process.platform}-${effectiveArch()}`);
   console.error(`mfe-player: downloading ${triple} from the latest release…`);
+  const ok = download(meta?.url || `${RELEASE_BASE}/${name}`, archive);
 
-  if (!download(meta?.url || `${RELEASE_BASE}/${name}`, archive)) {
+  if (!ok && manifestMissing) {
+    console.error("mfe-player: the release manifest is not reachable.");
+    console.error("  If a version was just tagged, its binaries may still be building —");
+    console.error("  retry in a few minutes, or install natively:");
+    console.error("    curl -fsSL https://raw.githubusercontent.com/omkargs/mfe-player/master/install.sh | bash");
+    return null;
+  }
+
+  if (!ok) {
+    console.error(`mfe-player: download failed (${meta?.url || `${RELEASE_BASE}/${name}`})`);
     return null;
   }
   if (meta?.sha256) {

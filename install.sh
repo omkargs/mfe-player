@@ -432,7 +432,10 @@ install_from_source() {
     fi
 
     say "building in $dir (a few minutes)"
-    if ! ( cd "$dir" && cargo build --release --locked ); then
+    local log="$dir/target/build.log"
+    if ! ( cd "$dir" && cargo build --release --locked 2>&1 | tee "$log" ); then
+        warn "the source build failed - last output:"
+        tail -n 8 "$log" | sed 's/^/      /'
         return 1
     fi
     if [ ! -f "$dir/target/release/$NAME" ]; then
@@ -488,6 +491,7 @@ install_mfe() {
     if install_from_source "$dir"; then
         return 0
     fi
+    warn "release download and source build failed - trying npm"
     if [ "$FROM_SOURCE" = 0 ] && install_from_npm; then
         return 0
     fi
@@ -501,6 +505,10 @@ install_mfe() {
 install_completions() {
     step "Completions"
     local bin="${MFE_BIN:-$PREFIX/$NAME}"
+    # npm installs into its own bin dir; whatever is on PATH is fine too.
+    if [ ! -x "$bin" ] && have mfe; then
+        bin="$(command -v mfe)"
+    fi
     [ -x "$bin" ] || { skip "binary is not installed"; return 0; }
 
     # npm can carry an older platform binary than this installer (0.2.0 does

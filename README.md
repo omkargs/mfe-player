@@ -119,6 +119,7 @@ Every tagged release builds all of these from the same commit:
 
 | Channel | Install | Also works |
 |---|---|---|
+| **Docker** | `docker compose up -d` | `Dockerfile` and `docker-compose.yml` included |
 | **npm / bun** | `npm install -g mfe-player` | `bun add -g mfe-player`, `bunx mfe-player` |
 | **pip / pipx / uv** | `pipx install mfe-player` | `uv tool install mfe-player`, `pip install mfe-player` |
 | **cargo** | `cargo install mfe-player` | `cargo binstall mfe-player` (prebuilt, no compile) |

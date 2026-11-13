@@ -1,0 +1,12 @@
+.git
+.github
+target
+*.md
+LICENSE
+install.sh
+flake.nix
+pyproject.toml
+packaging
+plugins
+docs
+npm

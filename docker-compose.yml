@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  mfe:
+    build: .
+    image: mfe-player:latest
+    container_name: mfe-player
+    stdin_open: true
+    tty: true
+    volumes:
+      - ~/.config/mfe:/root/.config/mfe
+      - ~/.local/share/mfe:/root/.local/share/mfe
+    environment:
+      - DISPLAY=${DISPLAY}
+    command: ["mfe-player"]

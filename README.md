@@ -8,7 +8,7 @@
      / __| | | / ___|| | | |/ _ \
      | |  | |_| \___ \| |_| | | | |
      | |__|  _  | ___) |  _  | | |
-      \____|_| |_|\____/|_| |_|\_|___
+      \____|_| \____/|_| |_|\___|
 
 </pre>
 
@@ -24,11 +24,15 @@
 
 [The rant](#-the-rant) · [Features](#-what-you-actually-get) · [Install](#-install-it) · [Keys](#-hotkeys) · [Themes](#-themes) · [Plugins](#-plugins-are-just-python)
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/omkargs/mfe-player/master/install.sh | bash
+```
+
 </div>
 
 ---
 
-## The reason i build this shit :
+## 😤 The rant
 
 I'm going to be honest with you: I built this because I got tired of being farmed.
 
@@ -65,6 +69,7 @@ This is **MFE Player** — **M**usic **F**or **E**veryone. It's MIT-licensed, it
 | **Spotify-ish queue** | Queue next, bulk-queue a whole view, reorder with `J`/`K`, jump to now playing, clear upcoming, undo mistakes. |
 | **Plugins, not lock-in** | Metadata, streaming and lyrics are separate Python 3 plugins. Provider breaks? The player walks down the list and keeps going. |
 | **Real background playback** | `Ctrl+B` detaches into a headless daemon. The queue, repeat, shuffle and radio keep running after the TUI is gone. |
+| **Drive it from any terminal** | `mfe play`, `pause`, `toggle`, `next`, `prev`, `mute`, `seek +10`, `shuffle`, `repeat`, `volume` — bind them to anything, script anything. The queue and repeat state stay correct because the daemon, not mpv, applies them. |
 | **Offline downloads** | `d` rips a track to disk and prefers the local copy next time. Planes and bad Wi-Fi are supported. |
 | **Link importing** | `Ctrl+L` accepts a YouTube/SoundCloud track or playlist, or a remote `.m3u`. Paste and go. |
 | **Radio autoplay** | `Ctrl+T` seeds a never-ending station from the current track so the silence never wins. |
@@ -73,7 +78,8 @@ This is **MFE Player** — **M**usic **F**or **E**veryone. It's MIT-licensed, it
 | **Album art in the terminal** | Cover art renders as truecolor half-blocks in the inspector — no sixel or Kitty protocol required. |
 | **Cava visualiser** | `Ctrl+V` toggles a smoothed spectrum panel with fast-rise peak caps, coloured by frequency. The same energy drives every animation. |
 | **14 themes** | `Alt+T` cycles live, and **preserves the comments in your config file** instead of nuking them. |
-| **Looks like a modern TUI** | Motion driven by the actual audio: bass-reactive borders, a 10-band wave meter, drifting gradients, dwell-then-scroll titles, spectrum peak caps and live status chips. `Alt+M` freezes it. |
+| **Looks like a modern TUI** | One hue, brightness only: a slow band of light rides the header and the played part of the progress bar, the spectrum gives each cell its own glow, titles breathe with the bass. No rainbow shimmer, no motion sickness. `Alt+M` freezes it. |
+| **Clickable volume meter** | Click or drag the mini meter in the player bar; `+`/`-` respect the `max_volume` cap you set. |
 | **Blends with your wallpaper** | `Alt+W` stops painting the background, so your terminal's own transparency shows the wallpaper through the app. Panels stay solid, so text stays readable. |
 | **Wallpaper palette** | `theme = "wallpaper"` (or `mfe theme adopt`) samples the wallpaper your compositor is using — swww, hyprpaper, GNOME, Plasma, macOS or Windows — and builds a matching dark palette from it. |
 | **Discord Rich Presence** | Optional: friends see the track, artist and progress over Discord’s local socket. No token, no server, no history leaves the machine. |

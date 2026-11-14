@@ -43,10 +43,28 @@ fn session_owner() -> Option<u32> {
         .filter(|pid| ipc::is_player_pid(*pid))
 }
 
+/// A Ctrl+B handoff writes `handoff.pid` just before the UI exits. Starting a
+/// second player during that teardown used to look like "another session owns
+/// mpv": the new UI grabbed a private player, so the old song kept playing
+/// with nobody able to control it and the next Ctrl+B killed it.
+fn wait_for_handoff() {
+    let Ok(raw) = fs::read_to_string(config::handoff_path()) else {
+        return;
+    };
+    if let Ok(pid) = raw.trim().parse::<u32>() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && ipc::is_player_pid(pid) {
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    let _ = fs::remove_file(config::handoff_path());
+}
+
 impl AudioEngine {
     pub fn connect_or_spawn(volume: f64, audio_device: &str) -> Result<Self> {
         config::ensure_dirs()?;
         let our_pid = std::process::id();
+        wait_for_handoff();
 
         // Somebody else already owns the shared player: don't steal it out
         // from under them (that used to leave both sessions fighting over one
@@ -310,6 +328,16 @@ impl Drop for AudioEngine {
             {
                 let _ = fs::remove_file(&lock);
             }
+        }
+        // Only clear the handoff marker when it is ours: another session may
+        // be handing off at the same time.
+        let handoff = config::handoff_path();
+        let ours = std::process::id().to_string();
+        if fs::read_to_string(&handoff)
+            .map(|raw| raw.trim() == ours)
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_file(&handoff);
         }
         if self.detached {
             return;

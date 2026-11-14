@@ -24,7 +24,7 @@ mod wallpaper;
 
 use std::io::{self, Stdout};
 use std::panic;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 #[cfg(unix)]
@@ -61,6 +61,76 @@ fn external_close_requested() -> bool {
     #[cfg(not(unix))]
     {
         false
+    }
+}
+
+/// A terminal that has gone away (window closed, terminal emulator crashed,
+/// ssh dropped) makes the pty report readable but return EOF forever. Polling
+/// it then keeps the event loop spinning at 100% CPU for as long as the
+/// machine is on, with dead children piling up behind it. Writes and ioctls
+/// on the orphaned pty slave fail with EIO, which is a cheap, side-effect-free
+/// way to notice before the spin starts.
+#[cfg(unix)]
+fn terminal_gone() -> bool {
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) };
+    if rc == 0 {
+        return false;
+    }
+    // ENOTTY/EBADF just mean "stdout is not a terminal" (piped output).
+    matches!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EIO)
+    )
+}
+
+#[cfg(not(unix))]
+fn terminal_gone() -> bool {
+    false
+}
+
+/// What the terminal did while we waited for a key.
+enum Input {
+    Timeout,
+    Ready,
+    Closed,
+}
+
+/// `crossterm::event::poll` keeps its own read loop: on a pty whose owner died
+/// it reports "readable" and never returns, so the UI burns a core forever.
+/// Polling the fd ourselves lets us notice POLLHUP and hand playback over.
+#[cfg(unix)]
+fn wait_for_input(timeout: Duration) -> Input {
+    let mut fd = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let millis = timeout.as_millis().min(libc::c_int::MAX as u128) as libc::c_int;
+    let ready = unsafe { libc::poll(&mut fd, 1, millis) };
+    if ready < 0 {
+        // EINTR: a signal arrived, the caller checks the close flag next.
+        return Input::Timeout;
+    }
+    if ready == 0 {
+        return Input::Timeout;
+    }
+    if fd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+        return Input::Closed;
+    }
+    if fd.revents & libc::POLLIN != 0 {
+        Input::Ready
+    } else {
+        Input::Timeout
+    }
+}
+
+#[cfg(not(unix))]
+fn wait_for_input(timeout: Duration) -> Input {
+    match event::poll(timeout) {
+        Ok(true) => Input::Ready,
+        Ok(false) => Input::Timeout,
+        Err(_) => Input::Closed,
     }
 }
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
@@ -432,6 +502,7 @@ fn main() -> Result<()> {
     let (app_config, config_warning) = config::load_config();
     let mouse = app_config.mouse;
     theme::apply_configured_with(&app_config.theme, Some(&app_config.wallpaper));
+    request_existing_session_handoff();
     let mut app = app::App::new(app_config)?;
     if let Some(warning) = config_warning {
         app.flash(warning);
@@ -720,22 +791,69 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse: bo
     Ok(())
 }
 
+/// A second `mfe` must continue the player that is already running, not start
+/// a private copy of the music. When the live session is another UI (a daemon
+/// is handled by `takeover`), ask it to hand playback over, wait for it to
+/// exit, and then take the shared player.
+fn request_existing_session_handoff() {
+    if daemon::is_running() {
+        return;
+    }
+    let Some(owner) = std::fs::read_to_string(config::session_lock_path())
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+    else {
+        return;
+    };
+    if !ipc::is_player_pid(owner) {
+        return;
+    }
+    let mut pending = std::fs::read_to_string(config::daemon_control_path()).unwrap_or_default();
+    if !pending.lines().any(|line| line.trim() == "handoff") {
+        if !pending.is_empty() && !pending.ends_with('\n') {
+            pending.push('\n');
+        }
+        pending.push_str("handoff\n");
+        let _ = std::fs::write(config::daemon_control_path(), pending);
+    }
+    // The other UI hands mpv to the daemon and exits; if it is wedged, give up
+    // after a few seconds and let the normal single-session path decide.
+    let deadline = Instant::now() + Duration::from_secs(6);
+    while Instant::now() < deadline && ipc::is_player_pid(owner) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) -> Result<()> {
     install_external_close_handlers();
     // Commands left over from a previous session must not replay now.
     let _ = std::fs::remove_file(config::daemon_control_path());
     let mut title = String::new();
+    let mut last_terminal_check = Instant::now();
     while !app.should_quit {
         app.tick();
         // `mfe next`, `mfe pause`, ... land here while the TUI owns the
         // player, so CLI control works whether the daemon or the UI is up.
         let commands = daemon::drain_control();
+        if commands.iter().any(|command| command.trim() == "handoff") {
+            // Another `mfe` is taking over: hand playback to the daemon and
+            // exit so only one UI owns the player.
+            app.handoff_for_external_close();
+            continue;
+        }
         if !commands.is_empty() {
             app.apply_remote(&commands);
         }
         if external_close_requested() {
             app.handoff_for_external_close();
             break;
+        }
+        if last_terminal_check.elapsed() >= Duration::from_millis(250) {
+            last_terminal_check = Instant::now();
+            if terminal_gone() {
+                app.handoff_for_external_close();
+                break;
+            }
         }
         if let Err(err) = terminal.draw(|frame| ui::draw(frame, app)) {
             // A closed terminal makes every later write fail. Keep the music
@@ -764,31 +882,38 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) ->
 
         // `poll`/`read` can fail with EINTR when a signal arrives mid-wait.
         // That is not an error: the flag above is the real message.
-        match event::poll(Duration::from_millis(50)) {
-            Ok(false) => {}
-            Ok(true) => match event::read() {
-                Ok(Event::Key(key))
-                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
-                {
-                    app.handle_key(key);
-                }
-                Ok(Event::Mouse(mouse)) => app.handle_mouse(mouse),
-                Ok(Event::Resize(_, _)) => {}
-                Ok(_) => {}
-                Err(err) => {
-                    if external_close_requested() {
-                        app.handoff_for_external_close();
-                        break;
-                    }
-                    return Err(err.into());
-                }
-            },
-            Err(err) => {
-                if external_close_requested() {
+        match wait_for_input(Duration::from_millis(50)) {
+            Input::Timeout => {}
+            Input::Closed => {
+                app.handoff_for_external_close();
+                break;
+            }
+            Input::Ready => {
+                // A dead pty polls as readable forever and `event::read`
+                // spins on the EOF. Bail out before handing it the fd.
+                if terminal_gone() {
                     app.handoff_for_external_close();
                     break;
                 }
-                return Err(err.into());
+                match event::read() {
+                    Ok(Event::Key(key))
+                        if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                    {
+                        app.handle_key(key);
+                    }
+                    Ok(Event::Mouse(mouse)) => app.handle_mouse(mouse),
+                    Ok(Event::Resize(_, _)) => {}
+                    Ok(_) => {}
+                    Err(err) => {
+                        // EOF/EIO from a vanished terminal is not a crash:
+                        // hand playback over and exit quietly.
+                        if external_close_requested() || terminal_gone() {
+                            app.handoff_for_external_close();
+                            break;
+                        }
+                        return Err(err.into());
+                    }
+                }
             }
         }
     }

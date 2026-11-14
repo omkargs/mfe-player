@@ -5993,20 +5993,31 @@ impl App {
     }
 
     fn detach_background(&mut self) {
-        if self.audio.is_some() {
-            if let Err(err) = crate::daemon::spawn_background() {
-                self.flash(format!("could not start background player: {err}"));
-                return;
-            }
-            if let Some(audio) = self.audio.as_mut() {
-                audio.detach();
-            }
-            self.detached_on_quit = true;
-            self.should_quit = true;
-            self.persist();
-        } else {
+        let Some(private) = self.audio.as_ref().map(|audio| audio.is_private()) else {
             self.flash("audio engine is not running");
+            return;
+        };
+        // A private player belongs to this session alone: the daemon only
+        // knows the shared socket, so it could not control it, and the player
+        // dies with us. Keep the music playing and say why instead.
+        if private {
+            self.flash("another mfe window owns background playback — close it first");
+            return;
         }
+        // A UI that starts during this handoff must wait for our mpv instead
+        // of deciding that another session owns it and grabbing a private one.
+        let _ = std::fs::write(config::handoff_path(), std::process::id().to_string());
+        if let Err(err) = crate::daemon::spawn_background() {
+            let _ = std::fs::remove_file(config::handoff_path());
+            self.flash(format!("could not start background player: {err}"));
+            return;
+        }
+        if let Some(audio) = self.audio.as_mut() {
+            audio.detach();
+        }
+        self.detached_on_quit = true;
+        self.should_quit = true;
+        self.persist();
     }
 
     /// The terminal went away (window closed, SIGHUP/SIGTERM, failed write).
@@ -6018,11 +6029,18 @@ impl App {
             self.should_quit = true;
             return;
         }
-        // If the daemon cannot start, detaching mpv still keeps the song
-        // alive; losing MPRIS is worse than losing neither.
-        let _ = crate::daemon::spawn_background();
-        if let Some(audio) = self.audio.as_mut() {
-            audio.detach();
+        // A private player exists only for this session; spawning a second
+        // background player would either duplicate the music or lose it. Let
+        // it stop with the session instead.
+        let private = self.audio.as_ref().is_some_and(|audio| audio.is_private());
+        if !private {
+            // If the daemon cannot start, detaching mpv still keeps the song
+            // alive; losing MPRIS is worse than losing neither.
+            let _ = std::fs::write(config::handoff_path(), std::process::id().to_string());
+            let _ = crate::daemon::spawn_background();
+            if let Some(audio) = self.audio.as_mut() {
+                audio.detach();
+            }
         }
         self.detached_on_quit = true;
         self.should_quit = true;

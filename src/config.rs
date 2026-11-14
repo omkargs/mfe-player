@@ -168,6 +168,13 @@ pub fn session_lock_path() -> PathBuf {
     runtime_dir().join("session.pid")
 }
 
+/// Written by a UI that is handing playback to the daemon (Ctrl+B, window
+/// closed). A UI or daemon that starts during that brief teardown waits for
+/// the old session to let go of mpv instead of spawning a private player.
+pub fn handoff_path() -> PathBuf {
+    runtime_dir().join("handoff.pid")
+}
+
 /// PID of the headless background player, when one is running.
 pub fn daemon_pid_path() -> PathBuf {
     runtime_dir().join("daemon.pid")

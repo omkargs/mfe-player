@@ -189,6 +189,15 @@ pub fn cleanup_stale_state() {
             let _ = fs::remove_file(&lock);
         }
     }
+    let handoff = config::handoff_path();
+    if let Some(pid) = fs::read_to_string(&handoff)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+    {
+        if !ipc::is_player_pid(pid) {
+            let _ = fs::remove_file(&handoff);
+        }
+    }
     let Ok(entries) = fs::read_dir(config::runtime_dir()) else {
         return;
     };
@@ -243,6 +252,7 @@ pub fn run() -> Result<()> {
     }
     // Let the old process finish tearing down its D-Bus/MPRIS name.
     thread::sleep(Duration::from_millis(350));
+    let _ = fs::remove_file(config::handoff_path());
 
     let (app_config, warning) = config::load_config();
     let mut app = App::new_headless(app_config)?;

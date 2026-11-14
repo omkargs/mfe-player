@@ -3057,8 +3057,8 @@ impl App {
         // Only one prefetch at a time: the old one is for a track that is no
         // longer next, so stop it instead of paying for two yt-dlp runs. The
         // exception is a prefetch playback is actively waiting on.
-        let awaited = self.prefetch_track_id.is_some()
-            && self.prefetch_track_id == self.awaiting_prefetch;
+        let awaited =
+            self.prefetch_track_id.is_some() && self.prefetch_track_id == self.awaiting_prefetch;
         if !awaited {
             if let Some(previous) = self.prefetch_cancel.as_ref() {
                 previous.cancel();
@@ -3885,7 +3885,8 @@ impl App {
             self.search_dirty = false;
             // Cancel whatever is still in flight; nobody is waiting for it.
             self.search_generation = self.search_generation.wrapping_add(1);
-            self.search_epoch.store(self.search_generation, Ordering::SeqCst);
+            self.search_epoch
+                .store(self.search_generation, Ordering::SeqCst);
             return;
         }
         if !force && !self.search_dirty {
@@ -7359,10 +7360,7 @@ mod cache_tests {
         let mut map: HashMap<String, (u8, Instant)> = HashMap::new();
         let now = Instant::now();
         map.insert("old".into(), (1, now - Duration::from_secs(5)));
-        map.insert(
-            "expired".into(),
-            (2, now - Duration::from_secs(3600)),
-        );
+        map.insert("expired".into(), (2, now - Duration::from_secs(3600)));
         map.insert("fresh".into(), (3, now));
         trim_timed_cache(&mut map, Duration::from_secs(600), 1);
         assert!(!map.contains_key("expired"));

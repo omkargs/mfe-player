@@ -323,9 +323,7 @@ pub fn mpv_property(name: &str) -> Option<serde_json::Value> {
 
 /// Ask mpv for several properties over one socket connection. Status bars
 /// poll this every second; four separate connects per poll is pure overhead.
-pub fn mpv_properties(
-    names: &[&str],
-) -> std::collections::HashMap<String, serde_json::Value> {
+pub fn mpv_properties(names: &[&str]) -> std::collections::HashMap<String, serde_json::Value> {
     use std::collections::HashMap;
 
     let mut out: HashMap<String, serde_json::Value> = HashMap::new();

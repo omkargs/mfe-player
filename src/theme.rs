@@ -613,9 +613,23 @@ pub fn adopt_wallpaper(explicit: Option<&str>) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// These tests change process-wide theme state and run in parallel by
+    /// default, so `set_theme("auto")` could land between one test's
+    /// `set_transparent(false)` and its `bg()` assertion. Serialise every
+    /// test that mutates the active palette.
+    static THEME_LOCK: Mutex<()> = Mutex::new(());
+
+    fn theme_lock() -> MutexGuard<'static, ()> {
+        THEME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn transparency_resets_every_background_layer() {
+        let _guard = theme_lock();
         set_transparent(true);
         assert_eq!(bg(), Color::Reset);
         assert_eq!(panel(), Color::Reset);
@@ -630,6 +644,7 @@ mod tests {
 
     #[test]
     fn auto_theme_inherits_the_terminal_palette() {
+        let _guard = theme_lock();
         assert!(set_theme("auto"));
         let theme = get();
         assert_eq!(theme.bg, Color::Reset);
@@ -650,6 +665,7 @@ mod tests {
 
     #[test]
     fn ambient_tint_restores_the_original_accents() {
+        let _guard = theme_lock();
         set_theme("mfe");
         let base = get();
 

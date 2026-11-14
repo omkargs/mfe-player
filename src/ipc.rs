@@ -94,6 +94,94 @@ pub fn hide_window(command: &mut std::process::Command) {
     }
 }
 
+/// Ask the kernel to kill this child if the player process dies. Used for
+/// helpers whose work only makes sense while the UI is alive (cava, plugin
+/// runs, downloads) — a crashed or SIGKILLed TUI must not leave cava, yt-dlp
+/// and ffmpeg running in the background until the next reboot.
+///
+/// Not applied to mpv: playback intentionally outlives the UI.
+#[cfg(target_os = "linux")]
+pub fn die_with_parent(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+
+    unsafe {
+        command.pre_exec(|| {
+            // Safety: async-signal-safe syscall in the child between fork and
+            // exec; the error path only builds an io::Error.
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn die_with_parent(_command: &mut std::process::Command) {}
+
+/// Is `pid` alive *and* an mfe-player process?
+///
+/// Pid files (`session.pid`) outlive crashes, and the OS recycles pids, so
+/// "pid is alive" is not the same as "a player owns the session". Trusting a
+/// recycled pid used to convince every new launch that another session owned
+/// mpv: the TUI spawned a private player, the daemon waited ten seconds for a
+/// release that never came, and playback ended up in an unrunnable orphan.
+pub fn is_player_pid(pid: u32) -> bool {
+    if pid == 0 || pid == std::process::id() || !pid_alive(pid) {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // comm is the executable name (truncated to 15 chars), which is
+        // "mfe-player" for both the TUI and the daemon.
+        return std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .map(|comm| comm.trim().contains("mfe"))
+            .unwrap_or(false);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "comm="])
+            .output();
+        return output
+            .map(|out| String::from_utf8_lossy(&out.stdout).contains("mfe"))
+            .unwrap_or(false);
+    }
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output();
+        return output
+            .map(|out| {
+                let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+                text.contains("mfe-player") && !text.contains("no tasks")
+            })
+            .unwrap_or(false);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        true
+    }
+}
+
+/// Hand freed heap pages back to the OS after a big transient allocation
+/// (cover decode, library scan, a large search payload).
+///
+/// glibc keeps freed memory in its arenas by default, so a player that decodes
+/// a 20 MB cover once can sit at that RSS for the rest of the session. This is
+/// a no-op on platforms that already return pages eagerly.
+pub fn release_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // Safety: malloc_trim only walks the allocator's own bookkeeping and
+        // is safe to call from the main thread at any time.
+        unsafe {
+            libc::malloc_trim(0);
+        }
+    }
+}
+
 /// Is this process still alive? Unix gets the real answer from `kill(pid, 0)`;
 /// Windows asks `tasklist`. The daemon only calls this at startup, so a process
 /// spawn there is acceptable.

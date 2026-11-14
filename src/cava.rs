@@ -41,13 +41,16 @@ impl Cava {
             };
         }
 
-        let child = Command::new("cava")
+        let mut command = Command::new("cava");
+        command
             .arg("-p")
             .arg(&config_path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn();
+            .stderr(Stdio::null());
+        // cava only exists to animate the UI: if the player dies, it dies.
+        crate::ipc::die_with_parent(&mut command);
+        let child = command.spawn();
 
         let mut child = match child {
             Ok(child) => child,

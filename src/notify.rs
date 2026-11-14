@@ -25,12 +25,14 @@ pub fn now_playing(track: &Track) {
 
 #[cfg(target_os = "linux")]
 fn send(title: &str, body: &str) {
+    // `status()` waits for the notifier (a few dozen milliseconds) so the
+    // child is reaped instead of turning into a zombie for every track change.
     let _ = Command::new("notify-send")
         .args(["-a", "mfe-player", "-c", "player", title, body])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn();
+        .status();
 }
 
 #[cfg(target_os = "macos")]
@@ -47,7 +49,7 @@ end run";
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn();
+        .status();
 }
 
 #[cfg(windows)]
@@ -71,7 +73,7 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn();
+        .status();
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]

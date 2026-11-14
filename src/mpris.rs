@@ -20,7 +20,10 @@ pub struct Mpris {
 impl Mpris {
     pub fn start() -> Self {
         let (command_tx, command_rx) = mpsc::channel();
-        let (update_tx, update_rx) = async_channel::unbounded();
+        // Metadata updates are snapshots, not events: if the D-Bus loop is
+        // busy, keep the newest and drop older ones instead of queueing
+        // forever. Unbounded here would grow with every track change.
+        let (update_tx, update_rx) = async_channel::bounded(64);
         let active = Arc::new(AtomicBool::new(false));
         let error = Arc::new(Mutex::new(None));
 
@@ -43,7 +46,9 @@ impl Mpris {
     }
 
     pub fn push(&self, update: Update) {
-        let _ = self.updates.try_send(update);
+        // Keeps the queue bounded: the oldest snapshot is dropped when the
+        // D-Bus loop falls behind, so the desktop always sees the latest.
+        let _ = self.updates.force_send(update);
     }
 
     /// True once the D-Bus name is owned, i.e. the desktop shows our card.

@@ -52,6 +52,13 @@ fn cached(url: &str) -> PathBuf {
 /// of letting it grow forever; override with MFE_ARTWORK_CACHE_MB.
 const DEFAULT_CACHE_MB: u64 = 128;
 
+/// Hard ceiling for one cover file. Anything larger is a scan or a mistake,
+/// and decoding it would only cost memory.
+const MAX_COVER_BYTES: u64 = 24 * 1024 * 1024;
+/// Covers are rendered at 160px; 4096 is already generous for a source image.
+const MAX_COVER_EDGE: u32 = 4096;
+const MAX_DECODE_ALLOC: u64 = 96 * 1024 * 1024;
+
 pub fn cache_limit() -> u64 {
     std::env::var("MFE_ARTWORK_CACHE_MB")
         .ok()
@@ -70,6 +77,12 @@ fn touch(path: &Path) {
 
 fn enforce_limit() {
     let _ = evict(&config::artwork_dir(), cache_limit());
+}
+
+/// Trim the on-disk cover cache back under its limit. Public so the library
+/// scanner can call it after writing embedded art for a whole folder.
+pub fn enforce_cache_limit() {
+    enforce_limit();
 }
 
 /// Delete the oldest files until the directory is back under 90% of `limit`.
@@ -133,6 +146,8 @@ fn fetch(url: &str, target: &PathBuf) -> Result<bool> {
         .arg("12")
         .arg("--retry")
         .arg("1")
+        .arg("--max-filesize")
+        .arg(MAX_COVER_BYTES.to_string())
         .arg("-o")
         .arg(target)
         .arg(url)
@@ -144,18 +159,55 @@ fn fetch(url: &str, target: &PathBuf) -> Result<bool> {
     Ok(true)
 }
 
+/// Decode image bytes with hard limits so a decompression bomb (or a bound
+/// 10000x10000 booklet scan) cannot allocate gigabytes behind our back.
+fn decode(bytes: &[u8]) -> Result<image::DynamicImage> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .context("guessing artwork format")?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_COVER_EDGE);
+    limits.max_image_height = Some(MAX_COVER_EDGE);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC);
+    reader.limits(limits);
+    reader.decode().context("decoding artwork")
+}
+
+/// Downscale embedded library art before caching it, so a 5000px booklet scan
+/// does not sit on disk (or get decoded) at full size. `None` means the bytes
+/// were not a decodable image; callers then keep their own fallback.
+pub fn shrink_for_cache(bytes: &[u8], edge: u32) -> Option<Vec<u8>> {
+    let image = decode(bytes).ok()?;
+    let image = if image.width() > edge || image.height() > edge {
+        image.thumbnail(edge, edge)
+    } else {
+        image
+    };
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(out.into_inner())
+}
+
 /// Download (or reuse) and decode the artwork behind `url`.
 pub fn load(url: &str) -> Result<Artwork> {
     let path = cached(url);
     if fetch(url, &path)? {
         enforce_limit();
     }
-    let bytes = fs::read(&path).context("reading cached artwork")?;
-    touch(&path);
-    if bytes.len() < 64 {
+    let size = fs::metadata(&path)
+        .map(|meta| meta.len())
+        .map_err(|err| anyhow!("reading cached artwork: {err}"))?;
+    if size < 64 {
         return Err(anyhow!("artwork file is empty"));
     }
-    let image = image::load_from_memory(&bytes).context("decoding artwork")?;
+    if size > MAX_COVER_BYTES {
+        // Don't even read a pathological file into memory.
+        let _ = fs::remove_file(&path);
+        return Err(anyhow!("artwork is too large ({size} bytes)"));
+    }
+    let bytes = fs::read(&path).context("reading cached artwork")?;
+    touch(&path);
+    let image = decode(&bytes)?;
     let image = if image.width() > 160 || image.height() > 160 {
         image.thumbnail(160, 160)
     } else {

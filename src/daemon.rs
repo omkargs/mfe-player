@@ -96,6 +96,11 @@ pub fn is_running() -> bool {
 /// Start the daemon as a fully detached process. Called when the user presses
 /// Ctrl+B. The daemon waits for this process to release mpv before attaching.
 pub fn spawn_background() -> Result<()> {
+    // Ctrl+B followed by a closed window (or a failed draw) can ask twice.
+    // One daemon is enough — a second one would just wait ten seconds and exit.
+    if is_running() {
+        return Ok(());
+    }
     let exe = std::env::current_exe().context("locating the mfe-player binary")?;
     let log = fs::OpenOptions::new()
         .create(true)
@@ -156,7 +161,7 @@ fn session_owner_alive() -> bool {
     fs::read_to_string(config::session_lock_path())
         .ok()
         .and_then(|raw| raw.trim().parse::<u32>().ok())
-        .is_some_and(pid_alive)
+        .is_some_and(ipc::is_player_pid)
 }
 
 fn wait_for_session_release(timeout: Duration) -> bool {
@@ -168,6 +173,39 @@ fn wait_for_session_release(timeout: Duration) -> bool {
         thread::sleep(Duration::from_millis(50));
     }
     false
+}
+
+/// Remove state left by sessions that died without a clean shutdown: a
+/// `session.pid` whose pid now belongs to some unrelated program, and private
+/// `mpv-<pid>.sock` files from players that are gone. Without this, pid reuse
+/// makes every new launch think another session owns the player.
+pub fn cleanup_stale_state() {
+    let lock = config::session_lock_path();
+    if let Some(pid) = fs::read_to_string(&lock)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+    {
+        if !ipc::is_player_pid(pid) {
+            let _ = fs::remove_file(&lock);
+        }
+    }
+    let Ok(entries) = fs::read_dir(config::runtime_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(pid) = name
+            .strip_prefix("mpv-")
+            .and_then(|rest| rest.strip_suffix(".sock"))
+            .and_then(|pid| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if !ipc::is_player_pid(pid) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// A fresh TUI launch takes the player back from the daemon. The daemon exits
@@ -283,6 +321,66 @@ pub fn mpv_property(name: &str) -> Option<serde_json::Value> {
     }
 }
 
+/// Ask mpv for several properties over one socket connection. Status bars
+/// poll this every second; four separate connects per poll is pure overhead.
+pub fn mpv_properties(
+    names: &[&str],
+) -> std::collections::HashMap<String, serde_json::Value> {
+    use std::collections::HashMap;
+
+    let mut out: HashMap<String, serde_json::Value> = HashMap::new();
+    let Ok(mut stream) = ipc::connect(&config::mpv_socket_path()) else {
+        return out;
+    };
+    ipc::set_timeouts(&stream, Duration::from_millis(500));
+    for (index, name) in names.iter().enumerate() {
+        let request_id = 5000u64 + index as u64;
+        if writeln!(
+            stream,
+            "{}",
+            json!({ "command": ["get_property", name], "request_id": request_id })
+        )
+        .is_err()
+        {
+            return out;
+        }
+    }
+    if stream.flush().is_err() {
+        return out;
+    }
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    while out.len() < names.len() {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                    continue;
+                };
+                let Some(id) = value.get("request_id").and_then(|id| id.as_u64()) else {
+                    continue;
+                };
+                let Some(index) = id.checked_sub(5000).map(|id| id as usize) else {
+                    continue;
+                };
+                if index >= names.len() {
+                    continue;
+                }
+                let Some(data) = value.get("data") else {
+                    continue;
+                };
+                if data.is_null() {
+                    continue;
+                }
+                out.insert(names[index].to_string(), data.clone());
+            }
+            Err(_) => break,
+        }
+    }
+    out
+}
+
 /// Machine-readable snapshot for status bars and scripts.
 pub fn status_json() -> serde_json::Value {
     let state = crate::state::PersistedState::load().0;
@@ -302,14 +400,18 @@ pub fn status_json() -> serde_json::Value {
         .map(|track| track.album.clone())
         .unwrap_or_default();
 
-    let connected = mpv_property("idle-active").is_some();
-    let paused = mpv_property("pause")
+    let props = mpv_properties(&["idle-active", "pause", "time-pos", "duration"]);
+    let connected = props.contains_key("idle-active");
+    let paused = props
+        .get("pause")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let position = mpv_property("time-pos")
+    let position = props
+        .get("time-pos")
         .and_then(|v| v.as_f64())
         .unwrap_or(state.position);
-    let duration = mpv_property("duration")
+    let duration = props
+        .get("duration")
         .and_then(|v| v.as_f64())
         .unwrap_or_else(|| {
             state

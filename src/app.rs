@@ -1,6 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -21,7 +23,9 @@ use crate::models::{
     SearchResults, StreamInfo, Track,
 };
 use crate::platform::media::{self as media, Media};
-use crate::plugins::{run_plugin, InstalledPlugin, PluginKind, PluginRegistry};
+use crate::plugins::{
+    run_plugin, run_plugin_cancellable, CancelHandle, InstalledPlugin, PluginKind, PluginRegistry,
+};
 use crate::social::Scrobbler;
 use crate::state::{HistoryEntry, PersistedState};
 use crate::taste::{AutoplayMode, Taste};
@@ -757,6 +761,9 @@ pub struct App {
     pub search_error: Option<String>,
     search_dirty: bool,
     search_generation: u64,
+    /// Latest search generation, shared with worker threads so an outdated
+    /// search stops before spawning the next metadata plugin.
+    search_epoch: Arc<AtomicU64>,
     last_search_edit: Instant,
     search_cache: HashMap<String, (SearchResults, Instant)>,
     pub browse_stack: Vec<BrowsePage>,
@@ -776,6 +783,10 @@ pub struct App {
     pub downloads: HashMap<String, (Track, PathBuf)>,
     pub downloads_selected: usize,
     download_pending: HashSet<String>,
+    /// Downloads wait in this queue so a marked selection cannot spawn one
+    /// yt-dlp+ffmpeg pair per track at once.
+    download_queue: VecDeque<Track>,
+    downloads_active: usize,
     pub cava: Option<Cava>,
     pub cava_enabled: bool,
     /// Full-screen now-playing view (Alt+V).
@@ -833,6 +844,15 @@ pub struct App {
     current_stream: Option<StreamInfo>,
     stream_cache: HashMap<String, (StreamInfo, Instant)>,
     stream_source: usize,
+    /// Set when playback wants a track whose prefetch is still in flight.
+    /// The resolve worker for it already exists; spawning a second yt-dlp
+    /// would just double the CPU and memory for the same answer.
+    awaiting_prefetch: Option<String>,
+    /// Handles to the in-flight resolve/prefetch plugin runs, so a new
+    /// request can stop the old one instead of stacking python + yt-dlp
+    /// processes while the user skips through tracks.
+    resolve_cancel: Option<CancelHandle>,
+    prefetch_cancel: Option<CancelHandle>,
     playback_retries: u8,
     playback_failures: u8,
     /// When the resolve worker vanished (panic, kill) the reply never arrives;
@@ -874,10 +894,45 @@ pub struct App {
     pub eq_gains: [f64; 10],
     recent_queries: Vec<String>,
     dirty_since: Option<Instant>,
+    /// Last time expired search/stream/lyrics cache entries were dropped.
+    caches_pruned_at: Instant,
 }
 
 /// Centre frequencies of the ten bands users can actually hear and tune.
 pub const EQ_BANDS: [u32; 10] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+
+const SEARCH_CACHE_TTL: Duration = Duration::from_secs(300);
+const STREAM_CACHE_TTL: Duration = Duration::from_secs(900);
+const MAX_SEARCH_CACHE_ENTRIES: usize = 24;
+const MAX_STREAM_CACHE_ENTRIES: usize = 64;
+const MAX_LYRICS_CACHE_ENTRIES: usize = 96;
+const MAX_RADIO_HISTORY_ENTRIES: usize = 512;
+const MAX_PROBE_TAGS: usize = 512;
+
+/// Number of yt-dlp downloads allowed to run at once. Each one is a yt-dlp
+/// process plus an ffmpeg transcode; a big "download all" selection must not
+/// launch one pair per track.
+const MAX_CONCURRENT_DOWNLOADS: usize = 2;
+
+/// Drop entries older than `ttl`, then keep only the `max` newest.
+fn trim_timed_cache<K, V>(map: &mut HashMap<K, (V, Instant)>, ttl: Duration, max: usize)
+where
+    K: Eq + std::hash::Hash + Clone,
+{
+    map.retain(|_, (_, at)| at.elapsed() < ttl);
+    if map.len() <= max {
+        return;
+    }
+    let excess = map.len() - max;
+    let mut ages: Vec<(K, Instant)> = map
+        .iter()
+        .map(|(key, (_, at))| (key.clone(), *at))
+        .collect();
+    ages.sort_by_key(|(_, at)| *at);
+    for (key, _) in ages.into_iter().take(excess) {
+        map.remove(&key);
+    }
+}
 
 fn normalize_eq_gains(raw: &[f64]) -> [f64; 10] {
     let mut gains = [0.0f64; 10];
@@ -900,6 +955,7 @@ impl App {
 
     fn build(config: AppConfig, headless: bool) -> Result<Self> {
         config::ensure_dirs()?;
+        crate::daemon::cleanup_stale_state();
         if !headless {
             crate::daemon::takeover();
         }
@@ -1034,6 +1090,7 @@ impl App {
             search_error: None,
             search_dirty: false,
             search_generation: 0,
+            search_epoch: Arc::new(AtomicU64::new(0)),
             last_search_edit: Instant::now(),
             search_cache: HashMap::new(),
             browse_stack: Vec::new(),
@@ -1053,6 +1110,8 @@ impl App {
             downloads,
             downloads_selected: 0,
             download_pending: HashSet::new(),
+            download_queue: VecDeque::new(),
+            downloads_active: 0,
             cava,
             cava_enabled,
             sleep: SleepMode::Off,
@@ -1110,6 +1169,9 @@ impl App {
             current_stream: None,
             stream_cache: HashMap::new(),
             stream_source: 0,
+            awaiting_prefetch: None,
+            resolve_cancel: None,
+            prefetch_cancel: None,
             playback_retries: 0,
             playback_failures: 0,
             resolve_started: None,
@@ -1138,6 +1200,7 @@ impl App {
             eq_gains: normalize_eq_gains(&persisted.eq_gains),
             recent_queries: persisted.recent_queries,
             dirty_since: None,
+            caches_pruned_at: Instant::now(),
         };
 
         if app.library.is_empty() && !app.library_paths.is_empty() {
@@ -1195,6 +1258,8 @@ impl App {
         while let Ok(event) = self.events_rx.try_recv() {
             self.handle_event(event);
         }
+
+        self.prune_caches();
 
         self.poll_media();
         self.poll_discord();
@@ -2021,6 +2086,7 @@ impl App {
                         self.search_results = results;
                         self.search_selected = 0;
                         self.search_error = None;
+                        crate::ipc::release_memory();
                         self.status = if self.search_results.is_empty() {
                             format!("no results for “{}”", self.search_query)
                         } else {
@@ -2187,6 +2253,7 @@ impl App {
                 result,
             } => {
                 self.download_pending.remove(&track.id);
+                self.downloads_active = self.downloads_active.saturating_sub(1);
                 match result {
                     Ok(()) => {
                         self.downloads
@@ -2198,6 +2265,7 @@ impl App {
                         self.flash(format!("download failed: {err}"));
                     }
                 }
+                self.pump_downloads();
             }
             AppEvent::ArtworkDone { track_id, result } => {
                 if self.now_playing.as_ref().map(|t| t.id.as_str()) == Some(track_id.as_str()) {
@@ -2219,6 +2287,9 @@ impl App {
                         }
                     }
                 }
+                // Decoding a cover is the largest one-off allocation the TUI
+                // makes; do not keep its pages resident afterwards.
+                crate::ipc::release_memory();
             }
             AppEvent::ShareDone { result } => match result {
                 Ok(line) => self.flash(format!("copied: {line}")),
@@ -2233,6 +2304,12 @@ impl App {
                     self.library = tracks;
                     self.library_selected = 0;
                     let _ = library::save_cache(&self.library);
+                    // A scan writes one cover per album; keep the artwork
+                    // directory under its configured budget.
+                    crate::artwork::enforce_cache_limit();
+                    // Tag reading and cover thumbnails allocate a lot of
+                    // short-lived buffers; hand those pages back.
+                    crate::ipc::release_memory();
                     self.flash(format!("library: {count} local tracks"));
                     self.mark_dirty();
                 }
@@ -2977,21 +3054,42 @@ impl App {
         let Some(plugin) = order.get(source).cloned() else {
             return;
         };
+        // Only one prefetch at a time: the old one is for a track that is no
+        // longer next, so stop it instead of paying for two yt-dlp runs. The
+        // exception is a prefetch playback is actively waiting on.
+        let awaited = self.prefetch_track_id.is_some()
+            && self.prefetch_track_id == self.awaiting_prefetch;
+        if !awaited {
+            if let Some(previous) = self.prefetch_cancel.as_ref() {
+                previous.cancel();
+            }
+        }
         self.prefetch_track_id = Some(track.id.clone());
         let tx = self.events_tx.clone();
+        let cancel = CancelHandle::new();
+        let worker_cancel = cancel.clone();
+        self.prefetch_cancel = Some(cancel);
         thread::spawn(move || {
             let track_json = serde_json::to_string(&track).unwrap_or_else(|_| "{}".to_string());
             let args = vec!["resolve".to_string(), track_json];
-            let result = run_plugin(&plugin, &args, Duration::from_secs(75))
-                .and_then(|raw| {
-                    let info: StreamInfo = serde_json::from_str(&raw)
-                        .map_err(|err| anyhow::anyhow!("invalid plugin JSON: {err}"))?;
-                    if info.url.trim().is_empty() {
-                        return Err(anyhow::anyhow!("empty stream URL"));
-                    }
-                    Ok(info)
-                })
-                .map_err(|err| err.to_string());
+            let result = run_plugin_cancellable(
+                &plugin,
+                &args,
+                Duration::from_secs(75),
+                Some(&worker_cancel),
+            )
+            .and_then(|raw| {
+                let info: StreamInfo = serde_json::from_str(&raw)
+                    .map_err(|err| anyhow::anyhow!("invalid plugin JSON: {err}"))?;
+                if info.url.trim().is_empty() {
+                    return Err(anyhow::anyhow!("empty stream URL"));
+                }
+                Ok(info)
+            })
+            .map_err(|err| err.to_string());
+            if result.as_ref().is_err_and(|err| err == "cancelled") {
+                return;
+            }
             let _ = tx.send(AppEvent::PrefetchDone {
                 track_id: track.id,
                 result,
@@ -3007,9 +3105,54 @@ impl App {
         if self.prefetch_track_id.as_deref() == Some(track_id.as_str()) {
             self.prefetch_track_id = None;
         }
-        if let Ok(info) = result {
-            if !info.url.trim().is_empty() && !info.short_preview {
-                self.stream_cache.insert(track_id, (info, Instant::now()));
+        let awaited = self.awaiting_prefetch.as_deref() == Some(track_id.as_str());
+        match result {
+            Ok(info) if !info.url.trim().is_empty() && !info.short_preview => {
+                self.stream_cache
+                    .insert(track_id.clone(), (info.clone(), Instant::now()));
+                if !awaited {
+                    return;
+                }
+                // Playback was waiting on this resolve: start it instead of
+                // starting a duplicate resolve.
+                self.awaiting_prefetch = None;
+                if self
+                    .now_playing
+                    .as_ref()
+                    .is_some_and(|track| track.id == track_id)
+                {
+                    self.current_stream = Some(info.clone());
+                    if let Some(audio) = self.audio.as_ref() {
+                        let start = self.pending_seek.take().unwrap_or(0.0);
+                        if audio.load_from(&info, start).is_ok() {
+                            let via = info
+                                .extractor
+                                .clone()
+                                .or_else(|| self.active_streaming.clone())
+                                .unwrap_or_else(|| "streaming plugin".to_string());
+                            self.status = format!("playing via {via} · prefetched");
+                            self.resolving = false;
+                            self.pending_track_id = None;
+                            self.resolve_started = None;
+                            self.mark_dirty();
+                            self.prefetch_next();
+                            return;
+                        }
+                    }
+                }
+                // Prefetch produced something unusable for playback: resolve
+                // normally so the fallback chain still runs.
+                if let Some(track) = self.now_playing.clone() {
+                    self.resolve_track(track, self.stream_source);
+                }
+            }
+            _ => {
+                if awaited {
+                    self.awaiting_prefetch = None;
+                    if let Some(track) = self.now_playing.clone() {
+                        self.resolve_track(track, self.stream_source);
+                    }
+                }
             }
         }
     }
@@ -3049,12 +3192,30 @@ impl App {
             self.flash(format!("already downloading “{}”", track.title));
             return;
         }
-        let dir = config::downloads_dir();
-        if let Err(err) = std::fs::create_dir_all(&dir) {
+        if let Err(err) = std::fs::create_dir_all(config::downloads_dir()) {
             self.download_pending.remove(&track.id);
             self.flash(format!("could not create downloads folder: {err}"));
             return;
         }
+        self.download_queue.push_back(track);
+        self.pump_downloads();
+    }
+
+    /// Start queued downloads until the concurrency cap is reached. Every
+    /// download is a yt-dlp process plus an ffmpeg transcode, so a large
+    /// "download everything" selection must not launch them all at once.
+    fn pump_downloads(&mut self) {
+        while self.downloads_active < MAX_CONCURRENT_DOWNLOADS {
+            let Some(track) = self.download_queue.pop_front() else {
+                break;
+            };
+            self.downloads_active += 1;
+            self.launch_download(track);
+        }
+    }
+
+    fn launch_download(&mut self, track: Track) {
+        let dir = config::downloads_dir();
         let stem = safe_filename(&format!("{} {}", track.artist, track.title));
         let stem = if stem.is_empty() {
             safe_filename(&track.id)
@@ -3071,7 +3232,8 @@ impl App {
         let tx = self.events_tx.clone();
         let dir_clone = dir.clone();
         thread::spawn(move || {
-            let output = std::process::Command::new("yt-dlp")
+            let mut command = std::process::Command::new("yt-dlp");
+            command
                 .arg("--no-playlist")
                 .arg("--no-progress")
                 .arg("--no-warnings")
@@ -3082,8 +3244,10 @@ impl App {
                 .arg("opus")
                 .arg("-o")
                 .arg(dir_clone.join(format!("{stem}.%(ext)s")))
-                .arg(&target)
-                .output();
+                .arg(&target);
+            // Do not keep downloading after the player is gone.
+            crate::ipc::die_with_parent(&mut command);
+            let output = command.output();
             let result = match output {
                 Ok(output) if output.status.success() => {
                     let mut found: Option<PathBuf> = None;
@@ -3719,6 +3883,9 @@ impl App {
         let query = self.search_query.trim().to_string();
         if query.is_empty() {
             self.search_dirty = false;
+            // Cancel whatever is still in flight; nobody is waiting for it.
+            self.search_generation = self.search_generation.wrapping_add(1);
+            self.search_epoch.store(self.search_generation, Ordering::SeqCst);
             return;
         }
         if !force && !self.search_dirty {
@@ -3752,6 +3919,7 @@ impl App {
 
         self.search_generation = self.search_generation.wrapping_add(1);
         let generation = self.search_generation;
+        self.search_epoch.store(generation, Ordering::SeqCst);
         self.search_loading = true;
         self.search_dirty = false;
         self.search_error = None;
@@ -3760,12 +3928,18 @@ impl App {
 
         let cache_key = query.to_lowercase();
         let tx = self.events_tx.clone();
+        let epoch = Arc::clone(&self.search_epoch);
         thread::spawn(move || {
             let args = vec!["search".to_string(), query];
             let mut errors = Vec::new();
             // If the active metadata plugin is down, walk the other installed
             // ones so search keeps working instead of dying on one provider.
             for plugin in metadata_order {
+                // The user typed again (or cleared the field): stop instead of
+                // spawning more plugin processes for an answer nobody wants.
+                if epoch.load(Ordering::SeqCst) != generation {
+                    return;
+                }
                 let name = plugin.manifest.name.clone();
                 match run_plugin(&plugin, &args, Duration::from_secs(20)).and_then(|raw| {
                     let payload: SearchPayload = serde_json::from_str(&raw)
@@ -4286,6 +4460,25 @@ impl App {
     }
 
     fn resolve_track(&mut self, track: Track, source: usize) {
+        // One explicit resolve at a time: skipping tracks used to leave every
+        // previous python + yt-dlp tree running for up to 75 seconds.
+        if let Some(previous) = self.resolve_cancel.as_ref() {
+            previous.cancel();
+        }
+        self.resolve_cancel = None;
+        // The prefetcher may already be resolving this exact track. Waiting for
+        // its reply is far cheaper than spawning a second yt-dlp (+ python)
+        // for the same answer — that is how one play turned into two.
+        if source == self.stream_source
+            && self.prefetch_track_id.as_deref() == Some(track.id.as_str())
+        {
+            self.awaiting_prefetch = Some(track.id.clone());
+            self.resolving = true;
+            self.pending_track_id = Some(track.id.clone());
+            self.resolve_started = Some(Instant::now());
+            self.status = format!("resolving “{}” (prefetch already running)…", track.title);
+            return;
+        }
         let order = self.streaming_order();
         let mut plugin_idx = source;
         if source == 0 {
@@ -4319,22 +4512,35 @@ impl App {
         self.resolve_started = Some(Instant::now());
         self.status = format!("resolving “{}” via {}…", track.title, plugin.manifest.name);
         let tx = self.events_tx.clone();
+        let cancel = CancelHandle::new();
+        let worker_cancel = cancel.clone();
+        self.resolve_cancel = Some(cancel);
         thread::spawn(move || {
             let track_json = serde_json::to_string(&track).unwrap_or_else(|_| "{}".to_string());
             let args = vec!["resolve".to_string(), track_json];
-            let result = run_plugin(&plugin, &args, Duration::from_secs(75))
-                .and_then(|raw| {
-                    let mut info: StreamInfo = serde_json::from_str(&raw)
-                        .map_err(|err| anyhow::anyhow!("invalid plugin JSON: {err}"))?;
-                    if info.url.trim().is_empty() {
-                        return Err(anyhow::anyhow!("plugin returned an empty stream URL"));
-                    }
-                    if info.url.len() > 16_000 {
-                        info.url.truncate(16_000);
-                    }
-                    Ok(info)
-                })
-                .map_err(|err| err.to_string());
+            let result = run_plugin_cancellable(
+                &plugin,
+                &args,
+                Duration::from_secs(75),
+                Some(&worker_cancel),
+            )
+            .and_then(|raw| {
+                let mut info: StreamInfo = serde_json::from_str(&raw)
+                    .map_err(|err| anyhow::anyhow!("invalid plugin JSON: {err}"))?;
+                if info.url.trim().is_empty() {
+                    return Err(anyhow::anyhow!("plugin returned an empty stream URL"));
+                }
+                if info.url.len() > 16_000 {
+                    info.url.truncate(16_000);
+                }
+                Ok(info)
+            })
+            .map_err(|err| err.to_string());
+            // A cancelled resolve has been replaced by a newer request; its
+            // reply must not disturb the state of that newer resolve.
+            if result.as_ref().is_err_and(|err| err == "cancelled") {
+                return;
+            }
             let _ = tx.send(AppEvent::StreamResolved {
                 track_id: track.id,
                 result,
@@ -6485,6 +6691,42 @@ impl App {
         }
     }
 
+    /// Search results, resolved stream URLs and lyrics are kept in memory for
+    /// speed. Without a sweep they would hold every query and every track of a
+    /// long session forever, so expired entries are dropped and hard caps keep
+    /// the worst case small.
+    fn prune_caches(&mut self) {
+        if self.caches_pruned_at.elapsed() < Duration::from_secs(30) {
+            return;
+        }
+        self.caches_pruned_at = Instant::now();
+        trim_timed_cache(
+            &mut self.search_cache,
+            SEARCH_CACHE_TTL,
+            MAX_SEARCH_CACHE_ENTRIES,
+        );
+        trim_timed_cache(
+            &mut self.stream_cache,
+            STREAM_CACHE_TTL,
+            MAX_STREAM_CACHE_ENTRIES,
+        );
+        if self.lyrics_cache.len() > MAX_LYRICS_CACHE_ENTRIES {
+            // Lyrics are fetched again on demand; keeping the newest set is
+            // not worth an LRU bookkeeping layer here.
+            self.lyrics_cache.clear();
+        }
+        if self.radio_history.len() > MAX_RADIO_HISTORY_ENTRIES {
+            self.radio_history.clear();
+        }
+        if self.probe_tags.len() > MAX_PROBE_TAGS {
+            self.probe_tags.clear();
+        }
+        // Caches are the main churn in a long session (search payloads,
+        // resolved URLs, lyrics). Returning their pages keeps RSS flat instead
+        // of letting the allocator's high-water mark become the new baseline.
+        crate::ipc::release_memory();
+    }
+
     /// Start a search from the command line (`mfe-player daft punk`).
     pub fn prime_search(&mut self, query: String) {
         let query = query.trim().to_string();
@@ -6597,6 +6839,13 @@ fn unix_secs() -> u64 {
 }
 
 fn normalize_results(results: &mut SearchResults) {
+    // A provider can return thousands of rows (or the same album under many
+    // ids). Keeping that in RAM and in the search cache is pointless: the UI
+    // only ever shows a few hundred rows, and every extra entry is cloned into
+    // the cache and album track lists.
+    const MAX_TRACKS: usize = 400;
+    const MAX_GROUPS: usize = 200;
+
     let mut seen_tracks = HashSet::new();
     results
         .tracks
@@ -6612,6 +6861,10 @@ fn normalize_results(results: &mut SearchResults) {
         album.is_valid()
             && seen_albums.insert((album.title.to_lowercase(), album.artist.to_lowercase()))
     });
+
+    results.tracks.truncate(MAX_TRACKS);
+    results.artists.truncate(MAX_GROUPS);
+    results.albums.truncate(MAX_GROUPS);
 
     if results.artists.is_empty() {
         let mut seen = HashSet::new();
@@ -7095,4 +7348,25 @@ fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
         && column < rect.x.saturating_add(rect.width)
         && row >= rect.y
         && row < rect.y.saturating_add(rect.height)
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn timed_cache_drops_expired_and_oldest_entries() {
+        let mut map: HashMap<String, (u8, Instant)> = HashMap::new();
+        let now = Instant::now();
+        map.insert("old".into(), (1, now - Duration::from_secs(5)));
+        map.insert(
+            "expired".into(),
+            (2, now - Duration::from_secs(3600)),
+        );
+        map.insert("fresh".into(), (3, now));
+        trim_timed_cache(&mut map, Duration::from_secs(600), 1);
+        assert!(!map.contains_key("expired"));
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key("fresh"), "newest entry survives");
+    }
 }

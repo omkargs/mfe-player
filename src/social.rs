@@ -6,10 +6,25 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{anyhow, Result};
 
 use crate::models::Track;
+
+/// Scrobbles that may be in flight at once. Each one is a `curl` process
+/// waiting on the network; skipping through tracks with a flaky connection
+/// used to start one thread + process per track.
+const MAX_IN_FLIGHT_SCROBBLES: usize = 2;
+static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+struct InFlight;
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 fn now_unix() -> u64 {
     std::time::SystemTime::now()
@@ -109,9 +124,15 @@ fn listen_body(track: &Track, listen_type: &str, listened_at: Option<u64>) -> se
 }
 
 fn submit_async(token: String, body: serde_json::Value) {
-    std::thread::Builder::new()
+    // Drop scrobbles instead of piling up processes when the network hangs.
+    if IN_FLIGHT.fetch_add(1, Ordering::SeqCst) >= MAX_IN_FLIGHT_SCROBBLES {
+        IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+        return;
+    }
+    let spawned = std::thread::Builder::new()
         .name("listenbrainz".to_string())
         .spawn(move || {
+            let _guard = InFlight;
             use std::process::{Command, Stdio};
             let Ok(mut child) = Command::new("curl")
                 .args([
@@ -139,8 +160,10 @@ fn submit_async(token: String, body: serde_json::Value) {
                 let _ = stdin.write_all(body.to_string().as_bytes());
             }
             let _ = child.wait();
-        })
-        .ok();
+        });
+    if spawned.is_err() {
+        IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// Minimal ListenBrainz client. A token in the config is all it needs; the

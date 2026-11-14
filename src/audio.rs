@@ -36,14 +36,11 @@ pub struct AudioEngine {
     private: bool,
 }
 
-fn pid_alive(pid: u32) -> bool {
-    ipc::pid_alive(pid)
-}
-
 fn session_owner() -> Option<u32> {
     fs::read_to_string(config::session_lock_path())
         .ok()
         .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .filter(|pid| ipc::is_player_pid(*pid))
 }
 
 impl AudioEngine {
@@ -54,7 +51,7 @@ impl AudioEngine {
         // Somebody else already owns the shared player: don't steal it out
         // from under them (that used to leave both sessions fighting over one
         // mpv and the music silently "not playing"). Take a private one.
-        let private = session_owner().is_some_and(pid_alive);
+        let private = session_owner().is_some();
         let socket_path = if private {
             config::private_mpv_socket_path(our_pid)
         } else {
@@ -367,6 +364,11 @@ fn spawn_mpv(socket_path: &Path, volume: f64, audio_device: &str) -> Result<Chil
         .arg("--ytdl=yes")
         .arg("--network-timeout=20")
         .arg("--cache=yes")
+        // Cap mpv's demuxer cache: the defaults are tuned for video and can
+        // hold a lot of a streaming file in RAM. Audio streams only need a
+        // small forward window to stay gapless.
+        .arg("--demuxer-max-bytes=64MiB")
+        .arg("--demuxer-max-back-bytes=16MiB")
         .arg("--prefetch-playlist=yes")
         .arg("--gapless-audio=yes")
         .arg("--audio-client-name=mfe-player")
@@ -387,6 +389,12 @@ fn spawn_mpv(socket_path: &Path, volume: f64, audio_device: &str) -> Result<Chil
 
     // Detach mpv from the terminal so closing the pane does not kill playback.
     ipc::hide_window(&mut command);
+    // A private player exists only for this session: the daemon attaches to
+    // the shared socket, so nobody could adopt it. If the session dies without
+    // a clean shutdown, take mpv with it instead of leaving an orphan.
+    if socket_path != config::mpv_socket_path() {
+        ipc::die_with_parent(&mut command);
+    }
 
     command.spawn().map_err(|err| {
         anyhow!(

@@ -81,6 +81,14 @@ fn embedded_art(path: &Path, tag: Option<&lofty::tag::Tag>) -> Option<String> {
     if bytes.is_empty() {
         return None;
     }
+    // Booklet scans can be tens of megabytes. Thumbnail once at scan time —
+    // the player only ever paints covers at ~160px — and skip anything that
+    // cannot be decoded and is too big to keep as-is.
+    let payload = match crate::artwork::shrink_for_cache(bytes, 320) {
+        Some(small) => small,
+        None if bytes.len() as u64 > 24 * 1024 * 1024 => return None,
+        None => bytes.to_vec(),
+    };
     let target = config::artwork_dir().join(format!(
         "embedded-{}.img",
         hash(&path.display().to_string())
@@ -88,7 +96,7 @@ fn embedded_art(path: &Path, tag: Option<&lofty::tag::Tag>) -> Option<String> {
     if let Some(parent) = target.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    fs::write(&target, bytes).ok()?;
+    fs::write(&target, payload).ok()?;
     Some(target.display().to_string())
 }
 

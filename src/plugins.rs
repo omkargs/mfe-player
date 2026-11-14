@@ -2,6 +2,8 @@ use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,6 +11,56 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::config;
+
+/// Upper bound on how much of a plugin's stdout/stderr we keep in memory.
+/// yt-dlp happily dumps megabytes of JSON and warnings; a rogue or chatty
+/// plugin must never be able to balloon the player's RSS.
+const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Handle that can stop an in-flight plugin from another thread. Skipping
+/// tracks quickly used to leave one python+yt-dlp tree per press running at
+/// the same time; cancelling the previous resolve caps that at one.
+#[derive(Clone, Default)]
+pub struct CancelHandle {
+    cancelled: Arc<AtomicBool>,
+    /// Process-group id of the running plugin, or 0 when nothing is running.
+    pgid: Arc<AtomicI32>,
+}
+
+impl CancelHandle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Stop the plugin and everything it spawned. Safe to call when nothing
+    /// is running.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        #[cfg(unix)]
+        {
+            let pgid = self.pgid.load(Ordering::SeqCst);
+            if pgid > 0 {
+                // Safety: plain syscall. The plugin runs in its own process
+                // group (see `run_plugin`), so this never hits the player.
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    fn attach(&self, child: &std::process::Child) {
+        self.pgid.store(child.id() as i32, Ordering::SeqCst);
+    }
+
+    fn detach(&self) {
+        self.pgid.store(0, Ordering::SeqCst);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -375,6 +427,18 @@ fn valid_id(id: &str) -> bool {
 }
 
 pub fn run_plugin(plugin: &InstalledPlugin, args: &[String], timeout: Duration) -> Result<String> {
+    run_plugin_cancellable(plugin, args, timeout, None)
+}
+
+/// Like [`run_plugin`], but the caller can abort the run from another thread
+/// via `cancel`. Used for stream resolves so skipping tracks cannot stack up
+/// several python + yt-dlp trees at once.
+pub fn run_plugin_cancellable(
+    plugin: &InstalledPlugin,
+    args: &[String],
+    timeout: Duration,
+    cancel: Option<&CancelHandle>,
+) -> Result<String> {
     let entry = plugin.dir.join(&plugin.manifest.entry);
     if !entry.exists() {
         return Err(anyhow!("plugin entry is missing: {}", entry.display()));
@@ -405,13 +469,32 @@ pub fn run_plugin(plugin: &InstalledPlugin, args: &[String], timeout: Duration) 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    run_with_timeout(command, timeout).with_context(|| format!("plugin '{}'", plugin.manifest.name))
+    // Give the plugin its own process group so a timeout can take down the
+    // whole tree (python -> yt-dlp -> ffmpeg) instead of leaving orphans that
+    // keep downloading in the background.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    // A crashed player must not leave the plugin tree behind either.
+    crate::ipc::die_with_parent(&mut command);
+
+    run_with_timeout(command, timeout, cancel)
+        .with_context(|| format!("plugin '{}'", plugin.manifest.name))
 }
 
-fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<String> {
+fn run_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+    cancel: Option<&CancelHandle>,
+) -> Result<String> {
     let mut child = command
         .spawn()
         .with_context(|| format!("could not start {:?}", command.get_program()))?;
+    if let Some(cancel) = cancel {
+        cancel.attach(&child);
+    }
 
     let stdout = child.stdout.take().context("plugin stdout unavailable")?;
     let stderr = child.stderr.take().context("plugin stderr unavailable")?;
@@ -421,26 +504,49 @@ fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<String> {
     let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
+            Ok(Some(status)) => {
+                // Reap first, then forget the pid: a later cancel() must not
+                // signal a process group whose id was reused.
+                if let Some(cancel) = cancel {
+                    cancel.detach();
+                }
+                break status;
+            }
             Ok(None) if Instant::now() < deadline => {
+                if cancel.is_some_and(CancelHandle::is_cancelled) {
+                    kill_tree(&mut child);
+                    if let Some(cancel) = cancel {
+                        cancel.detach();
+                    }
+                    let _ = stdout_reader.join();
+                    let _ = stderr_reader.join();
+                    return Err(anyhow!("cancelled"));
+                }
                 thread::sleep(Duration::from_millis(30));
             }
             Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_tree(&mut child);
+                if let Some(cancel) = cancel {
+                    cancel.detach();
+                }
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
                 return Err(anyhow!("timed out after {}s", timeout.as_secs()));
             }
             Err(err) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_tree(&mut child);
+                if let Some(cancel) = cancel {
+                    cancel.detach();
+                }
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
                 return Err(err.into());
             }
         }
     };
+    if let Some(cancel) = cancel {
+        cancel.detach();
+    }
 
     let out = stdout_reader.join().unwrap_or_default();
     let err = stderr_reader.join().unwrap_or_default();
@@ -462,9 +568,40 @@ fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<String> {
     }
 }
 
+/// Kill a plugin and everything it spawned. The child runs in its own process
+/// group (see `run_plugin`), so the negative pid reaches grandchildren such as
+/// `yt-dlp` and `ffmpeg` instead of orphaning them.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // Safety: plain syscall, no memory unsafety. The child is its own
+        // process-group leader, so -(pid) never matches our own group.
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn read_all(mut reader: impl Read) -> Vec<u8> {
-    let mut buffer = Vec::new();
-    let _ = reader.read_to_end(&mut buffer);
+    let mut buffer = Vec::with_capacity(8 * 1024);
+    // Read in chunks and stop *storing* at the cap while still draining the
+    // pipe: a full pipe would otherwise block the plugin until the timeout.
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => {
+                let room = MAX_CAPTURE_BYTES.saturating_sub(buffer.len());
+                if room > 0 {
+                    buffer.extend_from_slice(&chunk[..count.min(room)]);
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
     buffer
 }
 

@@ -126,43 +126,46 @@ pub fn die_with_parent(_command: &mut std::process::Command) {}
 /// recycled pid used to convince every new launch that another session owned
 /// mpv: the TUI spawned a private player, the daemon waited ten seconds for a
 /// release that never came, and playback ended up in an unrunnable orphan.
+#[cfg(target_os = "linux")]
+fn process_name_matches(pid: u32) -> bool {
+    // comm is the executable name (truncated to 15 chars), which is
+    // "mfe-player" for both the TUI and the daemon.
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .map(|comm| comm.trim().contains("mfe"))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn process_name_matches(pid: u32) -> bool {
+    std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains("mfe"))
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn process_name_matches(pid: u32) -> bool {
+    std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+        .map(|out| {
+            let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+            text.contains("mfe-player") && !text.contains("no tasks")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn process_name_matches(_pid: u32) -> bool {
+    true
+}
+
 pub fn is_player_pid(pid: u32) -> bool {
     if pid == 0 || pid == std::process::id() || !pid_alive(pid) {
         return false;
     }
-    #[cfg(target_os = "linux")]
-    {
-        // comm is the executable name (truncated to 15 chars), which is
-        // "mfe-player" for both the TUI and the daemon.
-        return std::fs::read_to_string(format!("/proc/{pid}/comm"))
-            .map(|comm| comm.trim().contains("mfe"))
-            .unwrap_or(false);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("ps")
-            .args(["-p", &pid.to_string(), "-o", "comm="])
-            .output();
-        return output
-            .map(|out| String::from_utf8_lossy(&out.stdout).contains("mfe"))
-            .unwrap_or(false);
-    }
-    #[cfg(windows)]
-    {
-        let output = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output();
-        return output
-            .map(|out| {
-                let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
-                text.contains("mfe-player") && !text.contains("no tasks")
-            })
-            .unwrap_or(false);
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-    {
-        true
-    }
+    process_name_matches(pid)
 }
 
 /// Hand freed heap pages back to the OS after a big transient allocation

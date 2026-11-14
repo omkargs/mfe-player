@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.3.3 — 2026-11-14
+
+### Fixed
+
+- **Closing the terminal no longer kills the music, and no longer leaves the
+  UI spinning forever.** A dead pty stays "readable" and `crossterm::poll`
+  loops on the EOF; UIs were found running at ~90% of a core for hours with
+  zombie `cava`/`mpv` children, a stale private socket and the MPRIS name.
+  Input is now polled with `poll(2)`, `POLLHUP` hands playback to the daemon,
+  and the tty is verified before crossterm sees the fd.
+- **Ctrl+B background handoff actually attaches now.** `session.pid` is
+  validated against a real `mfe` process (pid reuse used to look like a live
+  session forever), stale locks and private sockets are cleaned at startup,
+  and a `handoff.pid` marker stops a UI that opens mid-handoff from grabbing
+  a private player. The daemon no longer logs `previous session never
+  released the player` and quits after ten seconds.
+- **A second `mfe` joins the running player.** It asks the live UI to hand
+  playback over and then takes the shared mpv; the same song keeps playing
+  across the switch instead of a private player starting a second one.
+  Ctrl+B from a private player is refused with a message rather than
+  stopping the music.
+- Private players die with the session that owns them instead of surviving
+  as uncontrollable orphans.
+
+### Resource safety
+
+- Plugin and download processes are killed as a whole process group on
+  timeout/cancel, and helper processes die with the player (parent-death
+  signal). Superseded resolves and prefetches are cancelled, play vs
+  prefetch is deduplicated, and downloads run at most two at a time.
+- Bounded plugin capture (8 MiB), artwork decode (24 MiB / 4096 px), search
+  results, the MPRIS update queue, scrobbles in flight and the mpv demuxer
+  cache. Search/stream/lyrics/radio/probe caches have TTLs and entry caps,
+  and freed heap pages are returned after heavy work.
+
 ## Unreleased
 
 ### Added

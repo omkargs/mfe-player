@@ -1,6 +1,6 @@
 {
   "name": "mfe-player-darwin-arm64",
-  "version": "0.3.0",
+  "version": "0.3.3",
   "description": "mfe-player binary for macOS arm64",
   "license": "MIT",
   "repository": {

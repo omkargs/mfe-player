@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.6 — 2026-11-15
+
+### Added
+
+- **PyPI wheels** (`pipx install mfe-player`, `uv tool install mfe-player`,
+  `pip install mfe-player`): the real Rust binary built with maturin, uploaded
+  from CI with the first configured token. No Python glue, no compiler.
+- crates.io (`cargo install mfe-player`) and the README badges / install
+  channels for crates.io and npm.
+
 ## 0.3.5 — 2026-11-15
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
   "name": "mfe-player-linux-x64-musl",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "mfe-player binary for Linux x64 (musl)",
   "license": "MIT",
   "repository": {

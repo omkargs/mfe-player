@@ -13,12 +13,24 @@
 [![Stars](https://img.shields.io/github/stars/omkargs/mfe-player?style=flat&color=ffd166)](https://github.com/omkargs/mfe-player/stargazers)
 [![License: MIT](https://img.shields.io/badge/license-MIT-7ee787.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-f74c00.svg)](https://www.rust-lang.org)
+[![crates.io](https://img.shields.io/crates/v/mfe-player?color=ffa500)](https://crates.io/crates/mfe-player)
+[![npm](https://img.shields.io/npm/v/mfe-player?color=cb3837)](https://www.npmjs.com/package/mfe-player)
 
 [The rant](#-the-rant) · [Features](#-what-you-actually-get) · [Install](docs/INSTALL.md) · [Keys](docs/KEYS.md) · [Daemon](docs/DAEMON.md) · [Themes](docs/THEMES.md)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/omkargs/mfe-player/master/install.sh | bash
 ```
+
+Not a `curl | bash` person? Every channel installs the same binary:
+
+```bash
+cargo install mfe-player        # Rust package registry, prebuilt via cargo-binstall too
+npm install -g mfe-player       # esbuild-style per-platform packages, no postinstall script
+pipx install mfe-player         # uv tool install mfe-player, pip install mfe-player
+```
+
+Binary tarballs for Linux/macOS/Windows live on the [releases page](https://github.com/omkargs/mfe-player/releases). The complete list is in [docs/INSTALL.md](docs/INSTALL.md).
 
 **Platforms:** Linux is the tested, everything-works target · macOS builds in CI and is solid · **Windows is experimental** — the native build exists but nobody has certified it on real hardware, so on Windows the reliable path is Docker (`docker compose run --rm mfe`).
 
@@ -52,6 +64,19 @@ No account. No telemetry. No "recommended for you" — I know what I want to lis
 This is **MFE Player** — **M**usic **F**or **E**veryone. It's MIT-licensed, it's a terminal app, and it does not give a single shit about your engagement metrics.
 
 > If this saves you one subscription, one laggy tab, or one "sorry, this content is not available in your region", that's the whole point.
+
+---
+
+## 🩹 Recently fixed
+
+The annoying stuff, killed in 0.3.4 / 0.3.5:
+
+- **Autoplay used to queue the news.** A music search that missed in the song catalogs fell through to the radio directory, and autoplay also searched random title words like `"life mix"`. Autoplay now only queues real songs (15 s–20 min, no news/talk/podcast titles), skips any live/radio provider, and searches only genre tags. Radio is still there when you ask for it — it just can't sneak into your queue.
+- **Replaying a song started halfway through.** The player remembered your last position and per-track bookmarks, so every "play again" picked up mid-song. Replays now always start at 0:00 — Enter, the queue, next/previous and search results alike. (`Ctrl+B` background playback keeps playing untouched; pressing Enter on a paused player restarts it from the beginning.)
+- **`radio = false` in config could be silently overridden** by a toggle left over from a previous session. The config now wins on every launch.
+- **npm install on Windows was broken.** The platform packages (`mfe-player-win32-*`) were rejected by npm's spam detection and never existed. They are now `mfe-player-windows-x64` / `mfe-player-windows-arm64`.
+
+Full history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

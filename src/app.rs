@@ -858,14 +858,9 @@ pub struct App {
     /// When the resolve worker vanished (panic, kill) the reply never arrives;
     /// watch the clock so playback can never stall in "resolving" forever.
     resolve_started: Option<Instant>,
-    /// A position to seek to once the next stream finishes loading. Used when
-    /// a session is restored so it picks up mid-song instead of at zero.
-    pending_seek: Option<f64>,
-    /// The track and position written to disk when the previous session quit.
-    resume_at: Option<f64>,
+    /// The track written to disk when the previous session quit. Used to pick
+    /// the same song on Enter, but it always starts from the beginning.
     resume_track_id: Option<String>,
-    /// Per-track resume positions (long mixes, podcasts).
-    bookmarks: HashMap<String, f64>,
     /// Which recent query the search field is currently cycling through.
     history_cursor: Option<usize>,
     events_tx: Sender<AppEvent>,
@@ -1030,10 +1025,10 @@ impl App {
             _ => RepeatMode::Off,
         };
 
-        // Remember where the previous session stopped so Enter can resume the
-        // song mid-way instead of starting the whole track over.
+        // Remember which song the previous session stopped on so Enter can
+        // select it again. Playback always restarts from the beginning: a
+        // replay must never begin halfway through the track.
         let resume_track_id = persisted.now_playing.as_ref().map(|track| track.id.clone());
-        let resume_at = (persisted.position > 1.0).then_some(persisted.position);
 
         let now_playing = if attached {
             persisted.now_playing.clone()
@@ -1121,7 +1116,7 @@ impl App {
                 cfg_eq.clone()
             },
             normalize: persisted.normalize || cfg_normalize,
-            radio: persisted.radio || cfg_radio,
+            radio: cfg_radio,
             autoplay: cfg_autoplay,
             taste,
             probe_tags: HashMap::new(),
@@ -1175,10 +1170,7 @@ impl App {
             playback_retries: 0,
             playback_failures: 0,
             resolve_started: None,
-            pending_seek: None,
-            resume_at,
             resume_track_id,
-            bookmarks: persisted.bookmarks.clone(),
             history_cursor: None,
             events_tx,
             events_rx,
@@ -2198,7 +2190,7 @@ impl App {
                             .insert(track_id.clone(), (info.clone(), Instant::now()));
                         self.current_stream = Some(info.clone());
                         if let Some(audio) = self.audio.as_ref() {
-                            let start = self.pending_seek.take().unwrap_or(0.0);
+                            let start = 0.0;
                             match audio.load_from(&info, start) {
                                 Ok(()) => {
                                     let via = info
@@ -2847,7 +2839,7 @@ impl App {
         if query.trim().is_empty() {
             return;
         }
-        let order = self.metadata_order();
+        let order = self.music_metadata_order();
         let Some(_primary) = order.first().cloned() else {
             self.status = "queue finished · no metadata plugin for radio".to_string();
             return;
@@ -2856,11 +2848,20 @@ impl App {
         // then top artists). Radio mode keeps the old artist/title fallbacks.
         let mut queries = Vec::new();
         if self.config.taste_enabled && self.autoplay == AutoplayMode::Taste {
-            for (tag, _) in self.taste.top_tags(3) {
+            // Only tags that came from genre metadata are safe as queries.
+            // Title words ("life", "today", "history") used to become "life
+            // mix" searches that could return a talk show or news station.
+            for (tag, _) in self.taste.top_tags(12) {
                 if tag.starts_with("src ") || tag.starts_with("year ") {
                     continue;
                 }
+                if !self.taste.known_tags.contains(&tag) {
+                    continue;
+                }
                 queries.push(format!("{tag} mix"));
+                if queries.len() >= 3 {
+                    break;
+                }
             }
             for (artist, _) in self.taste.top_artists(2) {
                 queries.push(artist);
@@ -2920,7 +2921,7 @@ impl App {
         let mut candidates: Vec<Track> = Vec::new();
         let mut seen = HashSet::new();
         for track in &tracks {
-            if !track.is_valid()
+            if !track.is_music()
                 || queue_ids.contains(&track.id)
                 || current_id.as_deref() == Some(track.id.as_str())
                 || !seen.insert(track.id.clone())
@@ -3123,7 +3124,7 @@ impl App {
                 {
                     self.current_stream = Some(info.clone());
                     if let Some(audio) = self.audio.as_ref() {
-                        let start = self.pending_seek.take().unwrap_or(0.0);
+                        let start = 0.0;
                         if audio.load_from(&info, start).is_ok() {
                             let via = info
                                 .extractor
@@ -3910,7 +3911,7 @@ impl App {
             }
         }
 
-        let metadata_order = self.metadata_order();
+        let metadata_order = self.search_metadata_order();
         let Some(primary) = metadata_order.first() else {
             self.flash("no metadata plugin installed — open the plugin store (5)");
             self.search_loading = false;
@@ -4066,20 +4067,9 @@ impl App {
             .or(self.now_index)
             .unwrap_or(self.queue_selected)
             .min(self.queue.len() - 1);
-        let track_id = self.queue[index].id.clone();
-        let track_duration = self.queue[index].duration.map(|duration| duration as f64);
-        let start_at = self
-            .resume_at
-            .take()
-            .filter(|_| self.resume_track_id.as_deref() == Some(track_id.as_str()))
-            .filter(|position| *position > 1.0)
-            .filter(|position| track_duration.is_none_or(|duration| *position < duration - 5.0));
-        self.play_queue_index_at(index, start_at);
+        self.play_queue_index(index);
         self.resume_track_id = None;
-        self.flash(match start_at {
-            Some(position) => format!("resuming at {}", format_clock(position)),
-            None => "resuming queue".to_string(),
-        });
+        self.flash("resuming queue from the start".to_string());
         true
     }
 
@@ -4135,8 +4125,6 @@ impl App {
         self.now_index = Some(index);
         self.now_playing = Some(self.queue[index].clone());
         self.announce(&self.queue[index]);
-        self.pending_seek = None;
-        self.resume_at = None;
         self.resume_track_id = None;
         self.mark_dirty();
         let track = self.queue[index].clone();
@@ -4176,18 +4164,12 @@ impl App {
         self.now_index = Some(index);
         self.now_playing = Some(track.clone());
         self.announce(&track);
-        self.pending_seek = None;
-        self.resume_at = None;
         self.resume_track_id = None;
         self.mark_dirty();
         self.start_stream(track);
     }
 
     fn play_queue_index(&mut self, index: usize) {
-        self.play_queue_index_at(index, None);
-    }
-
-    fn play_queue_index_at(&mut self, index: usize, start_at: Option<f64>) {
         let Some(track) = self.queue.get(index).cloned() else {
             return;
         };
@@ -4195,18 +4177,8 @@ impl App {
         self.queue_selected = index;
         self.now_playing = Some(track.clone());
         self.announce(&track);
-        let start_at = start_at.or_else(|| {
-            self.bookmarks
-                .get(&track.id)
-                .copied()
-                .filter(|position| *position > 5.0)
-                .filter(|position| {
-                    track
-                        .duration
-                        .is_none_or(|duration| *position < duration as f64 - 5.0)
-                })
-        });
-        self.pending_seek = start_at;
+        // Always start at zero. Replaying a song, or returning to it after a
+        // skip, must not silently drop the listener halfway in.
         self.mark_dirty();
         self.start_stream(track);
     }
@@ -4351,6 +4323,29 @@ impl App {
         order
     }
 
+    /// Metadata providers that return songs rather than live stations.
+    /// Autoplay uses this order: a query that misses in the music catalogs
+    /// used to fall through to the radio directory and could start the news.
+    fn music_metadata_order(&self) -> Vec<InstalledPlugin> {
+        self.metadata_order()
+            .into_iter()
+            .filter(|plugin| !plugin.manifest.live)
+            .collect()
+    }
+
+    /// Search may show live stations, but only when the listener explicitly
+    /// made a radio provider the active metadata plugin. Otherwise a music
+    /// search that falls through must never be answered with a news station.
+    fn search_metadata_order(&self) -> Vec<InstalledPlugin> {
+        self.metadata_order()
+            .into_iter()
+            .filter(|plugin| {
+                !plugin.manifest.live
+                    || self.active_metadata.as_deref() == Some(plugin.manifest.id.as_str())
+            })
+            .collect()
+    }
+
     /// Streaming providers in priority order: the user's active plugin first,
     /// then every other installed one. When the active provider hands over a
     /// dead URL or only a 30-second preview clip, we walk down this list
@@ -4396,7 +4391,7 @@ impl App {
                     };
                     self.current_stream = Some(info);
                     if let Some(audio) = self.audio.as_ref() {
-                        let start = self.pending_seek.take().unwrap_or(0.0);
+                        let start = 0.0;
                         if audio
                             .load_from(self.current_stream.as_ref().unwrap(), start)
                             .is_ok()
@@ -4421,7 +4416,7 @@ impl App {
                 };
                 self.current_stream = Some(info.clone());
                 if let Some(audio) = self.audio.as_ref() {
-                    let start = self.pending_seek.take().unwrap_or(0.0);
+                    let start = 0.0;
                     if audio.load_from(&info, start).is_ok() {
                         self.status = "playing offline download".to_string();
                         self.mark_dirty();
@@ -4439,7 +4434,7 @@ impl App {
                 if at.elapsed() < Duration::from_secs(900) {
                     self.current_stream = Some(info.clone());
                     if let Some(audio) = self.audio.as_ref() {
-                        let start = self.pending_seek.take().unwrap_or(0.0);
+                        let start = 0.0;
                         if audio.load_from(info, start).is_ok() {
                             let via = info
                                 .extractor
@@ -6759,13 +6754,6 @@ impl App {
     }
 
     pub fn persist(&mut self) {
-        let mut bookmarks = self.bookmarks.clone();
-        if let Some(track) = &self.now_playing {
-            let position = self.audio_snapshot().position;
-            if position > 5.0 {
-                bookmarks.insert(track.id.clone(), position);
-            }
-        }
         let state = PersistedState {
             playlists: self.playlists.clone(),
             favorites: self.favorites.clone(),
@@ -6785,12 +6773,10 @@ impl App {
             active_streaming: self.active_streaming.clone(),
             active_lyrics: self.active_lyrics.clone(),
             recent_queries: self.recent_queries.clone(),
-            radio: self.radio,
             eq: self.eq.clone(),
             normalize: self.normalize,
             history: self.history.clone(),
             eq_gains: self.eq_gains.to_vec(),
-            bookmarks,
         };
         let _ = state.save();
         self.taste.flush();

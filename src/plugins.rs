@@ -100,6 +100,11 @@ pub struct PluginManifest {
     pub runtime: Option<String>,
     pub author: Option<String>,
     pub homepage: Option<String>,
+    /// The plugin returns live streams (radio directories) rather than songs.
+    /// Search may offer them when the listener asks, but autoplay must not
+    /// use them: a plain artist query should never turn into a news station.
+    #[serde(default)]
+    pub live: bool,
 }
 
 impl Default for PluginManifest {
@@ -114,6 +119,7 @@ impl Default for PluginManifest {
             runtime: None,
             author: None,
             homepage: None,
+            live: false,
         }
     }
 }
@@ -147,6 +153,7 @@ fn manifest(
         runtime: runtime.map(ToString::to_string),
         author: Some("mfe-player".to_string()),
         homepage: None,
+        live: false,
     }
 }
 
@@ -213,13 +220,19 @@ pub fn catalog() -> Vec<BundledPlugin> {
             script: include_str!("../plugins/metadata_internetarchive.py"),
         },
         BundledPlugin {
-            manifest: manifest(
-                "radiobrowser",
-                "Radio Browser Metadata",
-                PluginKind::Metadata,
-                "Searches radio-browser.info for live stations worldwide.",
-                None,
-            ),
+            manifest: {
+                let mut manifest = manifest(
+                    "radiobrowser",
+                    "Radio Browser Metadata",
+                    PluginKind::Metadata,
+                    "Searches radio-browser.info for live stations worldwide.",
+                    None,
+                );
+                manifest.live = true;
+                // 1.2.1 adds the `live` capability so autoplay skips stations.
+                manifest.version = "1.2.1".to_string();
+                manifest
+            },
             script: include_str!("../plugins/metadata_radiobrowser.py"),
         },
         BundledPlugin {
@@ -612,4 +625,42 @@ fn truncate(text: &str, max: usize) -> String {
     let mut out: String = text.chars().take(max).collect();
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_metadata_plugins_are_marked_and_music_ones_are_not() {
+        let catalog = catalog();
+        let radio = catalog
+            .iter()
+            .find(|plugin| plugin.manifest.id == "radiobrowser")
+            .expect("radio browser is bundled");
+        assert!(radio.manifest.live);
+
+        for music in ["itunes", "musicbrainz", "internetarchive"] {
+            let plugin = catalog
+                .iter()
+                .find(|plugin| plugin.manifest.id == music)
+                .unwrap_or_else(|| panic!("{music} is bundled"));
+            assert!(!plugin.manifest.live);
+        }
+    }
+
+    #[test]
+    fn live_capability_round_trips_through_plugin_json() {
+        let radio = catalog()
+            .into_iter()
+            .find(|plugin| plugin.manifest.id == "radiobrowser")
+            .unwrap();
+        let raw = serde_json::to_string(&radio.manifest).unwrap();
+        let back: PluginManifest = serde_json::from_str(&raw).unwrap();
+        assert!(back.live);
+
+        // Manifests installed before the field existed still load.
+        let legacy: PluginManifest = serde_json::from_str(r#"{"id":"itunes"}"#).unwrap();
+        assert!(!legacy.live);
+    }
 }

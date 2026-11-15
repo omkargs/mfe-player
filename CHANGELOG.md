@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.4 — 2026-11-15
+
+### Fixed
+
+- **Autoplay can no longer put the news (or a live station) in your queue.**
+  Autoplay used to walk every metadata plugin and take the first non-empty
+  search, so a music query that missed in iTunes/MusicBrainz could fall
+  through to the radio directory. It also searched title words such as
+  `life` or `history` as `"life mix"`. Autoplay now skips plugins that
+  declare themselves live, uses only genre metadata as search tags, and
+  only queues real songs (15 s–20 min, no news/talk/podcast titles).
+  A radio provider is still searchable when you explicitly select it.
+- **Replaying a song always starts at 0:00.** Sessions no longer restore the
+  previous position, and per-track resume bookmarks are gone; Enter, the
+  queue, Next/Previous and search results all begin the track from the start.
+- **`radio` follows `config.toml` again.** A toggle from an earlier session
+  could turn autoplay on permanently even with `radio = false`; the saved
+  flag is ignored now and the config value applies at every launch.
+
+### Changed
+
+- Metadata plugins can declare `"live": true` in `plugin.json`; the bundled
+  Radio Browser plugin sets it. Existing installs are refreshed on start.
+
 ## 0.3.3 — 2026-11-14
 
 ### Fixed

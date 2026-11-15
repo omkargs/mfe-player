@@ -46,6 +46,48 @@ impl Track {
     pub fn is_valid(&self) -> bool {
         !self.id.trim().is_empty() && !self.title.trim().is_empty()
     }
+
+    /// Live radio has no known end and no track metadata. It is playable when
+    /// the listener asks for it, but it must never be queued automatically.
+    pub fn is_live(&self) -> bool {
+        self.duration.is_none() || self.source == "radio-browser" || self.id.starts_with("radio:")
+    }
+
+    /// A song, not a live stream, talk show or podcast. Autoplay and any
+    /// background queueing use this: a plain artist search that falls through
+    /// to a radio directory used to put a news station in the queue.
+    pub fn is_music(&self) -> bool {
+        if !self.is_valid() || self.is_live() {
+            return false;
+        }
+        let Some(duration) = self.duration else {
+            return false;
+        };
+        // Interludes are too short to judge, and anything past twenty minutes
+        // is a mix, album upload, lecture or live set rather than a song.
+        if !(15..=20 * 60).contains(&duration) {
+            return false;
+        }
+        let haystack = format!("{} {} {}", self.title, self.artist, self.album).to_lowercase();
+        const TALK: &[&str] = &[
+            "news",
+            "breaking",
+            "podcast",
+            "interview",
+            "press conference",
+            "debate",
+            "live stream",
+            "livestream",
+            "talk show",
+            "radio show",
+            "audiobook",
+            "sermon",
+            "lecture",
+            "full episode",
+            "episode ",
+        ];
+        !TALK.iter().any(|word| haystack.contains(word))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -298,4 +340,54 @@ pub fn truncate(text: &str, max_width: usize) -> String {
 pub fn display_width(text: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
     text.width()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(source: &str, title: &str, artist: &str, duration: Option<u64>) -> Track {
+        Track {
+            id: format!("{source}:1"),
+            title: title.to_string(),
+            artist: artist.to_string(),
+            album: String::new(),
+            duration,
+            artwork: None,
+            source: source.to_string(),
+            year: None,
+            genre: Vec::new(),
+            tags: Vec::new(),
+            auto_queued: false,
+        }
+    }
+
+    #[test]
+    fn live_streams_are_not_music() {
+        assert!(!track("radio-browser", "BBC Radio 4", "UK · news", None).is_music());
+        assert!(!track("radio-browser", "Jazz FM", "UK · jazz", Some(0)).is_music());
+        let mut station = track("internetarchive", "Morning Edition", "NPR", Some(600));
+        station.id = "radio:abc".to_string();
+        assert!(!station.is_music());
+    }
+
+    #[test]
+    fn talk_and_extreme_lengths_are_not_music() {
+        assert!(!track(
+            "youtube",
+            "Breaking News: markets today",
+            "Sky News",
+            Some(240)
+        )
+        .is_music());
+        assert!(!track("youtube", "The Daily", "Podcast", Some(1800)).is_music());
+        assert!(!track("youtube", "Piano loop", "Someone", Some(21 * 60)).is_music());
+        assert!(!track("youtube", "Tiny interlude", "Band", Some(8)).is_music());
+    }
+
+    #[test]
+    fn songs_are_music() {
+        assert!(track("itunes", "Sunflower", "Post Malone", Some(158)).is_music());
+        assert!(track("youtube", "Heat Waves", "Glass Animals", Some(238)).is_music());
+    }
 }

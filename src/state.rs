@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 
 use anyhow::{Context, Result};
@@ -47,7 +46,6 @@ pub struct PersistedState {
     pub active_streaming: Option<String>,
     pub active_lyrics: Option<String>,
     pub recent_queries: Vec<String>,
-    pub radio: bool,
     pub eq: String,
     pub normalize: bool,
     #[serde(default = "default_history")]
@@ -55,9 +53,6 @@ pub struct PersistedState {
     /// Custom ten-band EQ curve in dB.
     #[serde(default)]
     pub eq_gains: Vec<f64>,
-    /// Last known position per track id, for long mixes and podcasts.
-    #[serde(default)]
-    pub bookmarks: HashMap<String, f64>,
 }
 
 impl Default for PersistedState {
@@ -77,12 +72,10 @@ impl Default for PersistedState {
             active_streaming: None,
             active_lyrics: None,
             recent_queries: Vec::new(),
-            radio: false,
             eq: "flat".to_string(),
             normalize: false,
             history: Vec::new(),
             eq_gains: Vec::new(),
-            bookmarks: HashMap::new(),
         }
     }
 }
@@ -135,17 +128,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn older_state_files_get_empty_bookmarks() {
-        let state: PersistedState = serde_json::from_str("{}").unwrap();
-        assert!(state.bookmarks.is_empty());
-    }
-
-    #[test]
-    fn bookmarks_survive_a_round_trip() {
-        let mut state = PersistedState::default();
-        state.bookmarks.insert("track:1".to_string(), 123.5);
-        let json = serde_json::to_string(&state).unwrap();
-        let back: PersistedState = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.bookmarks.get("track:1"), Some(&123.5));
+    fn legacy_bookmarks_are_ignored() {
+        // Older state files stored a per-track resume position. Replays now
+        // start at zero, so the field is simply dropped when loading.
+        let state: PersistedState =
+            serde_json::from_str(r#"{"bookmarks":{"track:1":123.5},"position":42.5}"#).unwrap();
+        assert_eq!(state.position, 42.5);
     }
 }

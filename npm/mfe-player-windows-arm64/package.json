@@ -1,7 +1,7 @@
 {
-  "name": "mfe-player-win32-arm64",
-  "version": "0.3.4",
-  "description": "mfe-player binary for Windows ARM64",
+  "name": "mfe-player-windows-arm64",
+  "version": "0.3.5",
+  "description": "mfe-player binary for Windows arm64",
   "license": "MIT",
   "repository": {
     "type": "git",

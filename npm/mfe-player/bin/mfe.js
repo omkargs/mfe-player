@@ -79,7 +79,7 @@ function packages() {
     return isMusl() ? [`${glibc}-musl`, glibc] : [glibc];
   }
   if (platform === "darwin") return [`mfe-player-darwin-${arch}`];
-  if (platform === "win32") return [`mfe-player-win32-${arch}`];
+  if (platform === "win32") return [`mfe-player-windows-${arch}`];
   return [];
 }
 

@@ -4048,14 +4048,22 @@ impl App {
         }
         let snapshot = self.audio_snapshot();
         if !snapshot.idle && snapshot.position > 0.5 {
-            // Something is already rolling: Enter un-pauses at most, it must
-            // never restart the track that is currently mid-play.
-            if snapshot.paused {
-                if let Some(audio) = self.audio.as_ref() {
-                    let _ = audio.set_pause(false);
-                }
-                self.flash("resumed");
+            // Something is already loaded. If it is playing, leave it alone:
+            // Enter must not interrupt the current song. If it is paused,
+            // Enter means "play the restored track" — and a replay starts from
+            // the beginning, not from wherever the previous session stopped.
+            if !snapshot.paused {
+                return true;
             }
+            let Some(track) = self.now_playing.clone() else {
+                return true;
+            };
+            if let Some(index) = self.queue.iter().position(|item| item.id == track.id) {
+                self.play_queue_index(index);
+            } else {
+                self.start_stream(track);
+            }
+            self.flash("playing from the start".to_string());
             return true;
         }
         // Prefer the track that was playing when the previous session quit,

@@ -162,15 +162,15 @@ jobs:
             npm/mfe-player-linux-arm64/bin \
             npm/mfe-player-darwin-x64/bin \
             npm/mfe-player-darwin-arm64/bin \
-            npm/mfe-player-win32-x64/bin \
-            npm/mfe-player-win32-arm64/bin
+            npm/mfe-player-windows-x64/bin \
+            npm/mfe-player-windows-arm64/bin
           tar -xzf dist/mfe-player-x86_64-unknown-linux-gnu.tar.gz  -C npm/mfe-player-linux-x64/bin
           tar -xzf dist/mfe-player-x86_64-unknown-linux-musl.tar.gz -C npm/mfe-player-linux-x64-musl/bin
           tar -xzf dist/mfe-player-aarch64-unknown-linux-gnu.tar.gz -C npm/mfe-player-linux-arm64/bin
           tar -xzf dist/mfe-player-x86_64-apple-darwin.tar.gz        -C npm/mfe-player-darwin-x64/bin
           tar -xzf dist/mfe-player-aarch64-apple-darwin.tar.gz       -C npm/mfe-player-darwin-arm64/bin
-          unzip -q dist/mfe-player-x86_64-pc-windows-msvc.zip        -d npm/mfe-player-win32-x64/bin
-          unzip -q dist/mfe-player-aarch64-pc-windows-msvc.zip       -d npm/mfe-player-win32-arm64/bin
+          unzip -q dist/mfe-player-x86_64-pc-windows-msvc.zip        -d npm/mfe-player-windows-x64/bin
+          unzip -q dist/mfe-player-aarch64-pc-windows-msvc.zip       -d npm/mfe-player-windows-arm64/bin
           find npm -name mfe-player -type f -exec chmod +x {} +
           node npm/scripts/set-version.mjs "${GITHUB_REF_NAME#v}"
 

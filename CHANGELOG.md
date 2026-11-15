@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.5 — 2026-11-15
+
+### Fixed
+
+- **Enter on an attached paused player replays from 0:00.** After Ctrl+B (or
+  closing the terminal), reattaching to a paused song used to un-pause it at
+  the exact second it stopped. Enter now starts that track over from the
+  beginning, the same as every other play. An attached player that is already
+  playing is still left untouched, so background music keeps going.
+
+### Changed
+
+- npm platform packages for Windows are named `mfe-player-windows-x64` and
+  `mfe-player-windows-arm64`. npm rejected the previous `win32` names with
+  `403 Package name triggered spam detection`, so those two were never
+  installable from the registry.
+
 ## 0.3.4 — 2026-11-15
 
 ### Fixed

@@ -27,7 +27,7 @@ Not a `curl | bash` person? Every channel installs the same binary:
 ```bash
 cargo install mfe-player        # Rust package registry, prebuilt via cargo-binstall too
 npm install -g mfe-player       # esbuild-style per-platform packages, no postinstall script
-pipx install mfe-player         # uv tool install mfe-player, pip install mfe-player
+pipx install mfe-player         # PyPI wheels via maturin (uv tool install mfe-player)
 ```
 
 Binary tarballs for Linux/macOS/Windows live on the [releases page](https://github.com/omkargs/mfe-player/releases). The complete list is in [docs/INSTALL.md](docs/INSTALL.md).

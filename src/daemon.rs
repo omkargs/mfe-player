@@ -485,15 +485,79 @@ pub fn status_json() -> serde_json::Value {
     })
 }
 
+/// Forcefully stop *everything* mfe-related: the background daemon, any open
+/// TUI session, and the mpv process they own. First we ask mpv for its own PID
+/// over IPC (before killing the owners), then SIGTERM each process, wait a beat,
+/// and SIGKILL anything still standing. Finally all sockets / pid / control
+/// files are removed so a stale socket never makes `status` or the next launch
+/// think a player is still around.
 pub fn stop_everything() -> Result<()> {
-    stop_background();
-    // `quit` also shuts down a player that was launched in the foreground.
-    let _ = mpv_command(json!(["quit"]));
-    // mpv can leave the Unix socket behind; a stale socket makes `status`
-    // (and the next launch's probe) think a player is still around.
+    // Ask mpv for its PID while the IPC socket is still alive.
+    let mpv_pid = mpv_property("pid")
+        .and_then(|value| value.as_u64())
+        .map(|pid| pid as u32)
+        .filter(|pid| *pid > 0 && *pid != std::process::id());
+
+    // Collect the daemon PID and any TUI session owner before we start killing.
+    let mut pids: Vec<u32> = Vec::new();
+    if let Some(pid) = running_pid() {
+        pids.push(pid);
+    }
+    if let Some(pid) = fs::read_to_string(config::session_lock_path())
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .filter(|pid| *pid != std::process::id() && ipc::pid_alive(*pid))
+    {
+        pids.push(pid);
+    }
+    if let Some(pid) = mpv_pid.filter(|pid| ipc::pid_alive(*pid)) {
+        pids.push(pid);
+    }
+    pids.sort_unstable();
+    pids.dedup();
+
+    // Also drop the daemon's graceful stop marker; if the daemon is wedged the
+    // SIGKILL below will take it out regardless.
+    request_stop();
+
+    // Graceful first, so state files get a chance to flush.
+    for &pid in &pids {
+        ipc::terminate(pid);
+    }
+    let deadline = Instant::now() + Duration::from_millis(600);
+    while Instant::now() < deadline && pids.iter().any(|&pid| pid_alive(pid)) {
+        thread::sleep(Duration::from_millis(30));
+    }
+    // Anything still alive gets -9.
+    for &pid in &pids {
+        if pid_alive(pid) {
+            ipc::kill(pid);
+        }
+    }
+
+    // Wait briefly for the kills to land before removing state files.
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline && pids.iter().any(|&pid| pid_alive(pid)) {
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let _ = fs::remove_file(config::daemon_pid_path());
+    let _ = fs::remove_file(config::daemon_heartbeat_path());
+    let _ = fs::remove_file(config::daemon_stop_path());
     let _ = fs::remove_file(config::mpv_socket_path());
     let _ = fs::remove_file(config::session_lock_path());
+    let _ = fs::remove_file(config::handoff_path());
     let _ = fs::remove_file(config::daemon_control_path());
+    // Private per-session mpv sockets left behind by crashed TUIs.
+    if let Ok(entries) = fs::read_dir(config::runtime_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("mpv-") && name.ends_with(".sock") {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
     Ok(())
 }
 

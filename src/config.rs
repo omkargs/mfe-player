@@ -280,6 +280,8 @@ pub struct AppConfig {
     pub mouse: bool,
     pub cava: bool,
     pub cava_position: String,
+    /// Body layout preset: full | focus | minimal (Alt+L cycles at runtime).
+    pub layout: String,
     pub cava_bars: u16,
     /// Start with the spectrum panel hidden (Alt+S toggles it at runtime).
     /// cava keeps running so the theme still reacts to the music.
@@ -357,6 +359,7 @@ impl Default for AppConfig {
             mouse: default_true(),
             cava: default_true(),
             cava_position: default_cava_position(),
+            layout: "full".to_string(),
             cava_bars: default_cava_bars(),
             cava_hidden: false,
             normalize: false,
@@ -441,6 +444,8 @@ mouse = true
 # Spectrum visualiser (needs `cava` installed).
 cava = true
 cava_position = "right"   # right | left
+# Body layout preset (Alt+L cycles): full | focus | minimal
+layout = "full"           # full: library+list+inspector+panel · focus: list+panel · minimal: list only
 cava_bars = 28
 # Remove the spectrum panel from the layout completely (Alt+S toggles it).
 # cava keeps capturing, so borders and the theme still pulse with the music.

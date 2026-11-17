@@ -626,7 +626,9 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let position = snapshot.position;
+    // Lyrics follow mpv's exact reported position so lines change in rhythm;
+    // the progress bar above still uses the extrapolated snapshot for smoothness.
+    let position = app.reported_audio_snapshot().position;
     let current = lines
         .iter()
         .enumerate()
@@ -771,6 +773,12 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Layout preset (Alt+L): Full shows everything, Focus drops the library
+    // sidebar, Minimal drops both sidebar and inspector. Narrow terminals are
+    // always reduced to the list so text never gets crushed.
+    let want_sidebar = matches!(app.layout, crate::app::LayoutMode::Full);
+    let want_inspector = matches!(app.layout, crate::app::LayoutMode::Full);
+
     let cava_right = !app.spectrum_hidden
         && app.cava_enabled
         && app.side_panel_mode != crate::app::SidePanelMode::Off
@@ -780,16 +788,14 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         0
     };
-    let detail_width = if area.width >= 112 && cava_width == 0 {
+    let detail_width = if area.width >= 112 && cava_width == 0 && want_inspector {
         34
     } else {
         0
     };
     let cava_left = !app.spectrum_hidden && app.cava_enabled && app.side_panel_mode != crate::app::SidePanelMode::Off && cava_width == 0;
 
-    // Narrow terminals get the list, not a 22-column sidebar glued to a
-    // 16-column list. The number keys still switch views.
-    let sidebar = area.width >= 76;
+    let sidebar = area.width >= 76 && want_sidebar;
     let mut constraints = Vec::new();
     if sidebar {
         constraints.push(Constraint::Length(22));
@@ -2445,40 +2451,124 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// Map a 2x2 bright-quadrant bitmask to the Unicode block glyph that draws the
+/// bright pixels in the foreground and the dark pixels in the background.
+/// bit 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right.
+fn quarter_glyph(mask: u8) -> &'static str {
+    match mask {
+        0b0000 => " ",   // all dark
+        0b0001 => "▘",   // top-left
+        0b0010 => "▝",   // top-right
+        0b0011 => "▀",   // top row
+        0b0100 => "▖",   // bottom-left
+        0b0101 => "▌",   // left column
+        0b0110 => "▞",   // top-right + bottom-left
+        0b0111 => "▛",   // all but bottom-right
+        0b1000 => "▗",   // bottom-right
+        0b1001 => "▚",   // top-left + bottom-right
+        0b1010 => "▐",   // right column
+        0b1011 => "▜",   // all but bottom-left
+        0b1100 => "▄",   // bottom row
+        0b1101 => "▙",   // all but top-right
+        0b1110 => "▟",   // all but top-left
+        0b1111 => "█",   // all bright
+        _ => " ",
+    }
+}
+
+fn luma(p: [u8; 3]) -> f32 {
+    0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32
+}
+
+/// High-quality artwork renderer using quarter blocks: each terminal cell shows
+/// a 2x2 cluster of source pixels (double the horizontal resolution of the old
+/// halfblock approach). Lanczos3 downscaling + per-cell two-colour quantisation
+/// keeps covers sharp and detailed even in a narrow inspector panel.
 fn draw_art(frame: &mut Frame, art: &crate::artwork::Artwork, area: Rect) {
-    if area.width < 2 || area.height < 1 {
+    if area.width < 2 || area.height < 2 {
         return;
     }
-    // A terminal halfblock cell is one column wide and two "pixels" tall.
-    // Fill the whole area: cell_w columns, cell_h rows, each row = 2 source pixels.
     let cell_w = area.width as usize;
     let cell_h = area.height as usize;
 
-    // Downscale once with Lanczos3 to the exact halfblock grid. This does the
-    // heavy lifting: every source pixel is blended with its neighbours, so the
-    // result is smooth and detailed rather than blocky nearest-neighbour mush.
-    let scaled = art.resized_lanczos(cell_w as u32, (cell_h * 2) as u32);
+    // A terminal cell is ~1:2 (w:h). Quarter blocks hold 2x2 source pixels, so
+    // to display a square cover without distortion we use cell_w = 2*cell_h,
+    // capped by the available height and centred vertically.
+    let disp_w = cell_w.min(cell_h * 2).max(2);
+    let disp_h = (disp_w / 2).clamp(1, cell_h);
+    let x_off = area.x + (area.width.saturating_sub(disp_w as u16)) / 2;
+    let y_off = area.y + (area.height.saturating_sub(disp_h as u16)) / 2;
 
-    let mut lines = Vec::with_capacity(cell_h);
-    for row in 0..cell_h {
-        let mut spans = Vec::with_capacity(cell_w);
-        let top_y = row * 2;
-        let bot_y = row * 2 + 1;
-        for col in 0..cell_w {
-            let top = scaled.pixel(col, top_y);
-            let bottom = scaled.pixel(col, bot_y);
+    // Resize the cover to exactly 2x the cell grid with Lanczos3.
+    let scaled = art.resized_lanczos(disp_w as u32 * 2, disp_h as u32 * 2);
+
+    let mut lines = Vec::with_capacity(disp_h);
+    for row in 0..disp_h {
+        let mut spans = Vec::with_capacity(disp_w);
+        for col in 0..disp_w {
+            // Four source pixels in this cell.
+            let tl = scaled.pixel(col * 2, row * 2);
+            let tr = scaled.pixel(col * 2 + 1, row * 2);
+            let bl = scaled.pixel(col * 2, row * 2 + 1);
+            let br = scaled.pixel(col * 2 + 1, row * 2 + 1);
+
+            let lum = [luma(tl), luma(tr), luma(bl), luma(br)];
+            let avg = (lum[0] + lum[1] + lum[2] + lum[3]) / 4.0;
+
+            // Split the four pixels into bright / dark groups by luminance,
+            // average each group into a single colour, pick the block glyph.
+            let mut fg = [0u32; 3];
+            let mut bg = [0u32; 3];
+            let mut fg_n = 0u32;
+            let mut bg_n = 0u32;
+            let mut mask = 0u8;
+            for (i, &p) in [tl, tr, bl, br].iter().enumerate() {
+                if lum[i] >= avg {
+                    mask |= 1 << i;
+                    fg[0] += p[0] as u32;
+                    fg[1] += p[1] as u32;
+                    fg[2] += p[2] as u32;
+                    fg_n += 1;
+                } else {
+                    bg[0] += p[0] as u32;
+                    bg[1] += p[1] as u32;
+                    bg[2] += p[2] as u32;
+                    bg_n += 1;
+                }
+            }
+            let fg_c = if fg_n > 0 {
+                ratatui::style::Color::Rgb(
+                    (fg[0] / fg_n) as u8,
+                    (fg[1] / fg_n) as u8,
+                    (fg[2] / fg_n) as u8,
+                )
+            } else {
+                ratatui::style::Color::Rgb(tl[0], tl[1], tl[2])
+            };
+            let bg_c = if bg_n > 0 {
+                ratatui::style::Color::Rgb(
+                    (bg[0] / bg_n) as u8,
+                    (bg[1] / bg_n) as u8,
+                    (bg[2] / bg_n) as u8,
+                )
+            } else {
+                ratatui::style::Color::Rgb(0, 0, 0)
+            };
             spans.push(Span::styled(
-                "▀",
-                Style::default()
-                    .fg(ratatui::style::Color::Rgb(top[0], top[1], top[2]))
-                    .bg(ratatui::style::Color::Rgb(bottom[0], bottom[1], bottom[2])),
+                quarter_glyph(mask),
+                Style::default().fg(fg_c).bg(bg_c),
             ));
         }
         lines.push(Line::from(spans));
     }
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme::panel())),
-        area,
+        Rect {
+            x: x_off,
+            y: y_off,
+            width: disp_w as u16,
+            height: disp_h as u16,
+        },
     );
 }
 
@@ -3072,6 +3162,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         key("Alt+N", "toggle loudness normalisation"),
         key("Ctrl+V", "side panel: spectrum → album art → off"),
         key("Alt+S", "hide / show the spectrum panel (no empty gutter)"),
+        key("Alt+L", "layout: full → focus → minimal"),
         key("inspector", "album art loads automatically for the playing track"),
         key("Alt+T", "cycle colour theme (wallpaper = sample the desktop)"),
         key("Alt+W", "transparent background (let the terminal show the wallpaper)"),

@@ -45,8 +45,10 @@ impl Default for AudioSnapshot {
 }
 
 impl AudioSnapshot {
-    /// Extrapolates current position based on elapsed time since the last mpv IPC
-    /// timestamp. Prevents progress bars and timers from jumping in discrete ~250ms steps.
+    /// Extrapolates the position forward from the last mpv IPC timestamp so the
+    /// progress bar glides instead of jumping in discrete steps. Never use this
+    /// for synced lyrics: running ahead of mpv makes lines change early and out
+    /// of rhythm.
     pub fn live_position(&self) -> f64 {
         if self.paused || self.idle || self.position <= 0.0 {
             return self.position;
@@ -181,6 +183,12 @@ impl AudioEngine {
         let mut s = self.snapshot.lock().map(|s| s.clone()).unwrap_or_default();
         s.position = s.live_position();
         s
+    }
+
+    /// Snapshot with the exact position mpv last reported (no extrapolation).
+    /// Synced lyrics use this so lines change in time with the audio.
+    pub fn reported_snapshot(&self) -> AudioSnapshot {
+        self.snapshot.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
     pub fn take_ended(&self) -> bool {

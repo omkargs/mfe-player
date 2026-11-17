@@ -366,6 +366,44 @@ impl SidePanelMode {
     }
 }
 
+/// Overall body layout. Cycled with Alt+L. The default `Full` keeps the
+/// library sidebar, the main list, the inspector and the side panel. `Focus`
+/// drops the sidebar so the list and artwork breathe. `Minimal` hides both the
+/// sidebar and inspector — just the list and the side panel, for a clean,
+/// wallpaper-forward rice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutMode {
+    Full,
+    Focus,
+    Minimal,
+}
+
+impl LayoutMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Full => Self::Focus,
+            Self::Focus => Self::Minimal,
+            Self::Minimal => Self::Full,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Focus => "focus",
+            Self::Minimal => "minimal",
+        }
+    }
+
+    pub fn parse(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "focus" | "wide" => Self::Focus,
+            "minimal" | "zen" => Self::Minimal,
+            _ => Self::Full,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SmartRule {
     RecentlyAdded,
@@ -815,6 +853,7 @@ pub struct App {
     pub cava: Option<Cava>,
     pub cava_enabled: bool,
     pub side_panel_mode: SidePanelMode,
+    pub layout: LayoutMode,
     /// Full-screen now-playing view (Alt+V).
     pub now_playing_fullscreen: bool,
     lyrics_pending: HashSet<String>,
@@ -988,6 +1027,7 @@ impl App {
         }
         let theme_name = theme::apply_configured_with(&config.theme, Some(&config.wallpaper));
         theme::set_transparent(config.transparent);
+        let layout = LayoutMode::parse(&config.layout);
         let cava_enabled = config.cava;
         let config_spectrum_hidden = config.cava_hidden;
         // cava is the cross-platform capture layer now: PipeWire/PulseAudio
@@ -1147,6 +1187,7 @@ impl App {
             cava,
             cava_enabled,
             side_panel_mode: if cava_enabled { SidePanelMode::Spectrum } else { SidePanelMode::Off },
+            layout,
             sleep: SleepMode::Off,
             eq: if persisted.eq != "flat" {
                 persisted.eq
@@ -1529,6 +1570,7 @@ impl App {
             KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.toggle_normalize()
             }
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::ALT) => self.cycle_layout(),
             KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::ALT) => self.cycle_fade(),
             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.cycle_replaygain()
@@ -3786,6 +3828,18 @@ impl App {
         } else {
             "desktop notifications off"
         });
+    }
+
+    fn cycle_layout(&mut self) {
+        self.layout = self.layout.next();
+        self.config.layout = self.layout.as_str().to_string();
+        config::set_line("layout", self.layout.as_str());
+        let hint = match self.layout {
+            LayoutMode::Full => "library · list · inspector · side panel",
+            LayoutMode::Focus => "focus: list + side panel (no library sidebar)",
+            LayoutMode::Minimal => "minimal: list + side panel only",
+        };
+        self.flash(format!("layout: {} — {hint}", self.layout.as_str()));
     }
 
     fn toggle_cava(&mut self) {
@@ -6060,7 +6114,9 @@ impl App {
     }
 
     fn update_lyrics_follow(&mut self) {
-        let position = self.audio_snapshot().position;
+        // Use mpv's exact reported position, not the extrapolated one — lyrics
+        // must change in rhythm with the audio, never run ahead of it.
+        let position = self.reported_audio_snapshot().position;
         let now_id = self.now_playing.as_ref().map(|track| track.id.clone());
         let Some(Overlay::Lyrics(lyrics)) = self.overlay.as_mut() else {
             return;
@@ -6098,7 +6154,7 @@ impl App {
         {
             return None;
         }
-        let position = self.audio_snapshot().position;
+        let position = self.reported_audio_snapshot().position;
         lyrics
             .lines
             .iter()
@@ -6698,6 +6754,14 @@ impl App {
         self.audio
             .as_ref()
             .map(AudioEngine::snapshot)
+            .unwrap_or_default()
+    }
+
+    /// Audio snapshot with mpv's exact reported position — for synced lyrics.
+    pub fn reported_audio_snapshot(&self) -> AudioSnapshot {
+        self.audio
+            .as_ref()
+            .map(AudioEngine::reported_snapshot)
             .unwrap_or_default()
     }
 

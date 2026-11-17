@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.3.7 — 2026-11-17
+
+### Added
+
+- **60 fps in-process visualiser.** cava is now only the capture layer; the
+  mel-spaced banding, asymmetric spring attack/release, peak hold, beat
+  detection and 1/8-cell block rendering all run inside the player. The TUI
+  redraws at 60 fps while music is playing instead of stepping once per 50 ms
+  input poll, which is why the bars and the rest of the interface finally move
+  together.
+- **cava now works on macOS and Windows.** Linux tries PipeWire and falls back
+  to PulseAudio; macOS uses CoreAudio (`source = tap` on 14.2+, `auto`
+  otherwise); Windows writes no `[input]` section and lets cava pick WASAPI.
+  cava's own framerate is raised to 60.
+- **`Alt+S` hides the spectrum panel completely** — no empty gutter, no layout
+  gap. cava keeps capturing so borders, gradients and the beat pulse still
+  follow the music. `cava_hidden = true` starts hidden; `Ctrl+V` also brings
+  the panel back.
+- **Status-bar spectrum.** `mfe status --json` gains a 64-band `spectrum`
+  array, `pulse` and `energy`, mirrored to the runtime directory by the player.
+  `contrib/mfe-spectrum.sh` renders it as `▁▂▃▄▅▆▇█` for waybar, polybar,
+  sketchybar and YASB.
+- **Three more rice palettes:** `everforest`, `one-dark`, `catppuccin-latte`.
+- **`docs/RICING.md`:** copy-paste setups for Hyprland + waybar, macOS +
+  sketchybar, and the GlazeWM/Komorebi + YASB + Rainmeter + Windows Terminal
+  stack, including transparency and palette matching.
+- **A layered, Spotify-style recommender.** Autoplay now combines continuous
+  implicit-feedback rewards, tag/artist content vectors, a track/artist
+  co-listening graph, time-of-day context buckets (CoSeRNN-style), an online
+  logistic model (the single-user shape of Logistic MF), Beta-Bernoulli bandit
+  arms with Thompson-style sampling plus epsilon-greedy exploration (the BaRT
+  idea), MMR diversity and freshness. Everything is stored in `taste.json` and
+  never leaves the machine.
+- **Scored shuffle.** Pressing `s` generates three candidate orders for the
+  upcoming queue and keeps the one that scores best on freshness, artist
+  spacing (~25% of the queue) and genre runs. `mfe next` under shuffle picks
+  the best of four remaining tracks instead of a blind random index.
+- **Slop filter.** `taste_filter = true` excludes slowed/reverb, sped-up,
+  nightcore, 8D, bass-boosted, loop and AI-cover re-uploads from autoplay.
+  They remain searchable and playable by hand.
+- **`mfe taste profile` / `contexts` / `steer` / `filter`.** The model is
+  inspectable and steerable: see the arm posteriors, what each time-of-day
+  bucket learned, nudge a genre directly, or switch the quality screen.
+- **`docs/RECOMMENDATIONS.md`** maps every layer to Spotify's published
+  research and states the honest limits (no other users, no audio CNN, no web
+  NLP, no ANN index).
+
+### Changed
+
+- The render loop decouples input polling (5–18 ms) from drawing (16 ms while
+  animating, 42 ms idle). Media, Discord and cache sweeps run on their own
+  slower clocks so D-Bus/SMTC bookkeeping is never in the frame budget.
+- The spectrum panel reads the engine snapshot instead of cloning cava values
+  and re-smoothing them per frame. Paused playback shows a quiet "paused"
+  panel instead of a frozen lie.
+- `theme = "rose-pine"` and `theme = "kanagawa"` now resolve from
+  `config.toml`; they previously fell back to the default palette.
+
 ## 0.3.6 — 2026-11-15
 
 ### Added

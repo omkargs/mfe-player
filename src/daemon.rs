@@ -445,6 +445,15 @@ pub fn status_json() -> serde_json::Value {
     } else {
         "▶"
     };
+    // The player mirrors a mel-spaced spectrum into the runtime directory, so
+    // a waybar/sketchybar/YASB module can draw a live mini visualiser without
+    // spawning a second cava instance.
+    let spectrum = crate::spectrum::read_published().or_else(crate::spectrum::latest);
+    let round = |value: f32| (value * 100.0).round() / 100.0;
+    let spectrum_bands: Vec<f32> = spectrum
+        .as_ref()
+        .map(|snapshot| snapshot.bands.iter().copied().map(round).collect())
+        .unwrap_or_default();
     let text = if title == "nothing playing" {
         format!("{icon} idle")
     } else if artist.is_empty() {
@@ -469,7 +478,10 @@ pub fn status_json() -> serde_json::Value {
         "shuffle": state.shuffle,
         "volume": state.volume,
         "mode": mode,
-        "connected": connected
+        "connected": connected,
+        "spectrum": spectrum_bands,
+        "pulse": spectrum.as_ref().map(|snapshot| round(snapshot.pulse)).unwrap_or(0.0),
+        "energy": spectrum.as_ref().map(|snapshot| round(snapshot.energy)).unwrap_or(0.0)
     })
 }
 

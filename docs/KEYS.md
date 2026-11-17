@@ -37,7 +37,8 @@ Press `?` inside the app for the full, searchable map. The ones you'll actually 
 | `Ctrl+E` | Edit the 10-band EQ |
 | `Ctrl+L` | Import song/playlist from a link |
 | `Ctrl+T` | Toggle radio autoplay |
-| `Ctrl+V` | Toggle cava spectrum |
+| `Ctrl+V` | Toggle cava spectrum (also brings it back if hidden) |
+| `Alt+S` | Hide/show the spectrum panel completely — no empty gutter |
 | `z` | Sleep timer (15–90 min or end of track, fades out) |
 | `E` · `Alt+N` | EQ presets · loudness normalisation |
 | `Alt+T` | Cycle themes (`wallpaper` samples your desktop) |

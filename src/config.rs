@@ -281,6 +281,9 @@ pub struct AppConfig {
     pub cava: bool,
     pub cava_position: String,
     pub cava_bars: u16,
+    /// Start with the spectrum panel hidden (Alt+S toggles it at runtime).
+    /// cava keeps running so the theme still reacts to the music.
+    pub cava_hidden: bool,
     pub normalize: bool,
     pub eq: String,
     /// Custom EQ curve in dB for the ten bands (only used when eq = "custom").
@@ -322,6 +325,9 @@ pub struct AppConfig {
     pub autoplay_probe: bool,
     /// Learn from plays/skips. Turning this off keeps radio-style autoplay.
     pub taste_enabled: bool,
+    /// Screen slowed/sped-up/nightcore/AI-cover re-uploads and other slop out
+    /// of autoplay. The catalogue is still searchable and playable by hand.
+    pub taste_filter: bool,
     /// Show the current track on Discord Rich Presence.
     pub discord: bool,
     /// Discord application client id (Developer Portal → OAuth2).
@@ -352,6 +358,7 @@ impl Default for AppConfig {
             cava: default_true(),
             cava_position: default_cava_position(),
             cava_bars: default_cava_bars(),
+            cava_hidden: false,
             normalize: false,
             eq: default_eq(),
             eq_gains: Vec::new(),
@@ -373,6 +380,7 @@ impl Default for AppConfig {
             autoplay_probe_every: 10,
             autoplay_probe: true,
             taste_enabled: true,
+            taste_filter: true,
             discord: false,
             discord_client_id: String::new(),
             discord_asset: "mfe".to_string(),
@@ -417,6 +425,10 @@ autoplay = "taste"
 # Learn a local taste profile from plays and skips (stored in taste.json).
 taste_enabled = true
 
+# Keep slowed/sped-up/nightcore/AI-cover re-uploads out of autoplay. They stay
+# searchable and playable; they just do not get recommended.
+taste_filter = true
+
 # How far the batch may wander outside the profile, and how often to try one
 # deliberate out-of-profile track (0 disables the mismatch probe).
 autoplay_explore = 0.12
@@ -430,6 +442,9 @@ mouse = true
 cava = true
 cava_position = "right"   # right | left
 cava_bars = 28
+# Remove the spectrum panel from the layout completely (Alt+S toggles it).
+# cava keeps capturing, so borders and the theme still pulse with the music.
+cava_hidden = false
 
 # Audio polish.
 normalize = false          # loudness normalisation via mpv dynaudnorm

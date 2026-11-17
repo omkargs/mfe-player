@@ -41,9 +41,18 @@ pub fn run() -> i32 {
         "cargo install yt-dlp (or pipx install yt-dlp)",
     );
     optional_binary("ffmpeg", "downloads", "install ffmpeg");
+    // cava is the cross-platform capture layer for the in-process visualiser:
+    // PipeWire/PulseAudio (Linux), CoreAudio (macOS), WASAPI (Windows).
+    let cava_hint = if cfg!(target_os = "macos") {
+        "brew install cava · source = tap captures system audio on 14.2+"
+    } else if cfg!(windows) {
+        "winget install karlstav.cava (0.10.4 or newer for the raw spectrum)"
+    } else {
+        "pacman -S cava · apt install cava · dnf install cava"
+    };
+    optional_binary("cava", "spectrum visualiser", cava_hint);
     #[cfg(target_os = "linux")]
     {
-        optional_binary("cava", "spectrum visualiser", "install cava");
         optional_binary("playerctl", "media keys", "install playerctl");
     }
 

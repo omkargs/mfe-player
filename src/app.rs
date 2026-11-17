@@ -26,7 +26,9 @@ use crate::platform::media::{self as media, Media};
 use crate::plugins::{
     run_plugin, run_plugin_cancellable, CancelHandle, InstalledPlugin, PluginKind, PluginRegistry,
 };
+use crate::recommend;
 use crate::social::Scrobbler;
+use crate::spectrum::{self, Visualizer};
 use crate::state::{HistoryEntry, PersistedState};
 use crate::taste::{AutoplayMode, Taste};
 use crate::theme;
@@ -341,6 +343,7 @@ pub enum PaletteAction {
     SmartOnRepeat,
     AdoptWallpaper,
     ToggleCava,
+    HideSpectrum,
     Background,
     Help,
     Quit,
@@ -673,6 +676,11 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         action: PaletteAction::ToggleCava,
     },
     PaletteItem {
+        label: "Hide / show the spectrum panel",
+        hint: "Alt+S",
+        action: PaletteAction::HideSpectrum,
+    },
+    PaletteItem {
         label: "Keep playing in background",
         hint: "Ctrl+B",
         action: PaletteAction::Background,
@@ -870,13 +878,12 @@ pub struct App {
     pub artwork_track_id: Option<String>,
     artwork_url: Option<String>,
     pub spinner: usize,
-    /// Smoothed overall loudness from cava (0..1). Drives every reactive
-    /// animation, so motion follows the music instead of a fixed clock.
-    energy: f32,
-    /// Low / mid / high band levels, already smoothed.
-    bass: f32,
-    mid: f32,
-    treble: f32,
+    /// In-process visualiser state. cava supplies raw bars; this owns the mel
+    /// re-binning, spring physics and beat pulse that the UI reads at 60 fps.
+    visualizer: Visualizer,
+    /// Hide the spectrum panel entirely (Alt+S). The audio engine keeps
+    /// running so the theme can still follow the music.
+    pub spectrum_hidden: bool,
     /// Frames left in the "new track" flourish. Used by the UI to pulse the
     /// player border and title, then fades out on its own.
     track_flash: u8,
@@ -891,6 +898,13 @@ pub struct App {
     dirty_since: Option<Instant>,
     /// Last time expired search/stream/lyrics cache entries were dropped.
     caches_pruned_at: Instant,
+    /// Previous visualiser tick, used to integrate the springs with real time
+    /// instead of assuming one frame = one fixed step.
+    last_frame_at: Instant,
+    /// Expensive OS integrations are polled on their own slower clocks so the
+    /// 60 fps render loop never waits on D-Bus/SMTC/Discord bookkeeping.
+    last_media_poll: Instant,
+    last_discord_poll: Instant,
 }
 
 /// Centre frequencies of the ten bands users can actually hear and tune.
@@ -957,8 +971,13 @@ impl App {
         let theme_name = theme::apply_configured_with(&config.theme, Some(&config.wallpaper));
         theme::set_transparent(config.transparent);
         let cava_enabled = config.cava;
-        let cava = (!headless && cava_enabled && cfg!(target_os = "linux"))
-            .then(|| Cava::spawn(config.cava_bars));
+        let config_spectrum_hidden = config.cava_hidden;
+        // cava is the cross-platform capture layer now: PipeWire/PulseAudio
+        // on Linux, CoreAudio on macOS, WASAPI on Windows. It also runs in the
+        // headless daemon so status bars get a live spectrum while detached.
+        // Hiding the panel (Alt+S) keeps capture alive so the theme and beat
+        // pulse still follow the music; `cava = false` stops it entirely.
+        let cava = cava_enabled.then(|| Cava::spawn(config.cava_bars));
         let downloads = load_downloads();
         // `mpris` stays as the legacy switch; `media` is the new name for
         // "auto" (use the platform backend) or "off" (no media card at all).
@@ -1181,10 +1200,8 @@ impl App {
             artwork_track_id: None,
             artwork_url: None,
             spinner: 0,
-            energy: 0.0,
-            bass: 0.0,
-            mid: 0.0,
-            treble: 0.0,
+            visualizer: Visualizer::new(),
+            spectrum_hidden: config_spectrum_hidden,
             track_flash: 0,
             seen_track: None,
             scrobbler: Scrobbler::new(listenbrainz_token),
@@ -1193,6 +1210,9 @@ impl App {
             recent_queries: persisted.recent_queries,
             dirty_since: None,
             caches_pruned_at: Instant::now(),
+            last_frame_at: Instant::now(),
+            last_media_poll: Instant::now() - Duration::from_secs(1),
+            last_discord_poll: Instant::now() - Duration::from_secs(1),
         };
 
         if app.library.is_empty() && !app.library_paths.is_empty() {
@@ -1253,8 +1273,17 @@ impl App {
 
         self.prune_caches();
 
-        self.poll_media();
-        self.poll_discord();
+        // OS integrations have their own clocks. Polling D-Bus/SMTC and
+        // rebuilding the Discord signature at 60 fps would put unrelated work
+        // inside the frame budget for no visible benefit.
+        if self.last_media_poll.elapsed() >= Duration::from_millis(100) {
+            self.last_media_poll = Instant::now();
+            self.poll_media();
+        }
+        if self.last_discord_poll.elapsed() >= Duration::from_millis(750) {
+            self.last_discord_poll = Instant::now();
+            self.poll_discord();
+        }
         self.check_sleep_timer();
         self.maybe_prime_radio();
         if let Some(track) = self.now_playing.clone() {
@@ -1493,6 +1522,9 @@ impl App {
                 self.toggle_ambient_art()
             }
             KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::ALT) => self.toggle_motion(),
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.toggle_spectrum_hidden()
+            }
             KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.seek(-self.config.long_seek_step)
             }
@@ -2947,9 +2979,13 @@ impl App {
             let plan = self.taste.plan_batch(
                 &candidates,
                 &recent,
-                15,
-                self.config.autoplay_probe,
-                self.config.autoplay_probe_every,
+                crate::taste::PlanOptions {
+                    limit: 15,
+                    probe: self.config.autoplay_probe,
+                    probe_every: self.config.autoplay_probe_every,
+                    filter: self.config.taste_filter,
+                    explore: self.config.autoplay_explore,
+                },
             );
             for mut track in plan.tracks {
                 track.auto_queued = true;
@@ -3680,12 +3716,6 @@ impl App {
     fn toggle_motion(&mut self) {
         self.config.motion = !self.config.motion;
         config::set_line("motion", if self.config.motion { "true" } else { "false" });
-        if !self.config.motion {
-            self.energy = 0.0;
-            self.bass = 0.0;
-            self.mid = 0.0;
-            self.treble = 0.0;
-        }
         self.flash(if self.config.motion {
             "motion on · the interface follows the music"
         } else {
@@ -3736,10 +3766,16 @@ impl App {
     }
 
     fn toggle_cava(&mut self) {
+        // If the panel is fully hidden, Ctrl+V brings it back instead of
+        // starting a second capture process.
+        if self.spectrum_hidden {
+            self.set_spectrum_hidden(false);
+            return;
+        }
         if self.cava.is_some() {
             self.cava = None;
             self.cava_enabled = false;
-            self.flash("spectrum visualiser off");
+            self.flash("spectrum visualiser off · the audio engine keeps running");
         } else {
             self.cava = Some(Cava::spawn(self.config.cava_bars));
             self.cava_enabled = true;
@@ -3747,6 +3783,28 @@ impl App {
                 Some(err) => self.flash(err.to_string()),
                 None => self.flash("spectrum visualiser on"),
             }
+        }
+    }
+
+    /// Alt+S: remove the spectrum panel from the layout completely, with no
+    /// empty gutter left behind. Unlike Ctrl+V this keeps cava alive so the
+    /// theme, borders and beat glow still follow the music.
+    fn toggle_spectrum_hidden(&mut self) {
+        self.set_spectrum_hidden(!self.spectrum_hidden);
+    }
+
+    fn set_spectrum_hidden(&mut self, hidden: bool) {
+        self.spectrum_hidden = hidden;
+        self.config.cava_hidden = hidden;
+        config::set_line("cava_hidden", if hidden { "true" } else { "false" });
+        if hidden {
+            self.flash("spectrum hidden · Alt+S brings it back");
+        } else {
+            // Coming back from hidden: make sure the capture layer exists.
+            if self.cava.is_none() && self.cava_enabled {
+                self.cava = Some(Cava::spawn(self.config.cava_bars));
+            }
+            self.flash("spectrum visible");
         }
     }
 
@@ -4706,7 +4764,16 @@ impl App {
 
         let len = self.queue.len();
         let next = if self.shuffle && len > 1 {
-            pseudo_random_except(len, index)
+            // Scored shuffle: sample a few remaining tracks and keep the one
+            // that fits best after the last few plays. Generator order stays
+            // intact, so `J`/`K` and the queue view are still meaningful.
+            let recent: Vec<Track> = self.queue[..index].iter().rev().take(8).cloned().collect();
+            let seed = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.subsec_nanos() as u64)
+                .unwrap_or(0);
+            recommend::choose_next(&self.queue, index, &recent, seed)
+                .unwrap_or_else(|| pseudo_random_except(len, index))
         } else if index + 1 < len {
             index + 1
         } else if self.repeat == RepeatMode::All && len > 0 {
@@ -4862,11 +4929,26 @@ impl App {
 
     fn toggle_shuffle(&mut self) {
         self.shuffle = !self.shuffle;
-        self.status = if self.shuffle {
-            "shuffle on".to_string()
+        if self.shuffle {
+            // Enabling shuffle rescores the upcoming queue in place: three
+            // sampled sequences, keep the one that spaces artists ~25% apart
+            // and keeps recently heard tracks out of the first few slots.
+            let current = self.now_index.unwrap_or(0);
+            let recent: Vec<Track> = self.queue[..current.min(self.queue.len())]
+                .iter()
+                .rev()
+                .take(8)
+                .cloned()
+                .collect();
+            let seed = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.subsec_nanos() as u64)
+                .unwrap_or(0);
+            recommend::shuffle_upcoming(&mut self.queue, current, &recent, seed);
+            self.status = "shuffle on · scored for freshness and artist spacing".to_string();
         } else {
-            "shuffle off".to_string()
-        };
+            self.status = "shuffle off".to_string();
+        }
         self.mark_dirty();
     }
 
@@ -5843,6 +5925,7 @@ impl App {
             }
             PaletteAction::ImportLink => self.open_link_import(),
             PaletteAction::ToggleCava => self.toggle_cava(),
+            PaletteAction::HideSpectrum => self.toggle_spectrum_hidden(),
             PaletteAction::Background => self.detach_background(),
             PaletteAction::Help => self.overlay = Some(Overlay::Help),
             PaletteAction::Quit => self.should_quit = true,
@@ -6587,10 +6670,17 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Pull the loudest bands out of cava and smooth them with a fast attack
-    /// and a slow release. Silence decays gracefully instead of snapping to
-    /// zero, which is what made the old animations feel twitchy.
+    /// Feed cava's raw bars through the in-process visualiser engine. The
+    /// engine integrates in real time, so a slow frame produces a longer
+    /// spring step instead of making the animation run in slow motion.
     fn update_energy(&mut self) {
+        let now = Instant::now();
+        let dt = now
+            .saturating_duration_since(self.last_frame_at)
+            .as_secs_f32()
+            .clamp(0.001, 0.1);
+        self.last_frame_at = now;
+
         let paused = self
             .audio
             .as_ref()
@@ -6600,43 +6690,37 @@ impl App {
             Some(cava) if !paused => cava.values(),
             _ => Vec::new(),
         };
-        if values.is_empty() {
-            let release = 0.10;
-            self.energy += (0.0 - self.energy) * release;
-            self.bass += (0.0 - self.bass) * release;
-            self.mid += (0.0 - self.mid) * release;
-            self.treble += (0.0 - self.treble) * release;
-            return;
+        let active = !paused && !values.is_empty();
+        // Alt+M freezes every animation, including the bars: keep the current
+        // frame instead of letting it fall to silence.
+        if self.config.motion {
+            self.visualizer.update(&values, dt, active);
+            spectrum::publish(&self.visualizer, active);
         }
-        let band = |from: f32, to: f32| -> f32 {
-            let len = values.len();
-            let start = ((from * len as f32) as usize).min(len.saturating_sub(1));
-            let end = (((to * len as f32) as usize).max(start + 1)).min(len);
-            let slice = &values[start..end];
-            if slice.is_empty() {
-                return 0.0;
-            }
-            (slice.iter().sum::<f64>() / slice.len() as f64) as f32
-        };
-        let bass = band(0.0, 0.28);
-        let mid = band(0.28, 0.66);
-        let treble = band(0.66, 1.0);
-        let overall = (bass * 0.5 + mid * 0.32 + treble * 0.18).clamp(0.0, 1.0);
-        // Attack when the music gets louder, release slowly when it drops.
-        let follow = |current: f32, target: f32| {
-            let rate = if target > current { 0.45 } else { 0.07 };
-            current + (target - current) * rate
-        };
-        self.energy = follow(self.energy, overall);
-        self.bass = follow(self.bass, bass);
-        self.mid = follow(self.mid, mid);
-        self.treble = follow(self.treble, treble);
+    }
+
+    /// Interpolated levels for the visible spectrum columns.
+    pub fn spectrum_levels(&self, columns: usize) -> Vec<f32> {
+        self.visualizer.levels(columns)
+    }
+
+    pub fn spectrum_peaks(&self, columns: usize) -> Vec<f32> {
+        self.visualizer.peak_line(columns)
+    }
+
+    /// Beat pulse (0..1) from the visualiser, used for the "liquid" glow.
+    pub fn beat(&self) -> f32 {
+        if self.config.motion {
+            self.visualizer.pulse()
+        } else {
+            0.0
+        }
     }
 
     /// Overall musical energy (0..1), smoothed.
     pub fn energy(&self) -> f32 {
         if self.config.motion {
-            self.energy
+            self.visualizer.energy()
         } else {
             0.0
         }
@@ -6645,7 +6729,7 @@ impl App {
     /// Low band (kick/bass) level, smoothed.
     pub fn bass(&self) -> f32 {
         if self.config.motion {
-            self.bass
+            self.visualizer.bass()
         } else {
             0.0
         }
@@ -6654,7 +6738,7 @@ impl App {
     /// Mid band level, smoothed.
     pub fn mid(&self) -> f32 {
         if self.config.motion {
-            self.mid
+            self.visualizer.mid()
         } else {
             0.0
         }
@@ -6663,7 +6747,7 @@ impl App {
     /// High band level, smoothed.
     pub fn treble(&self) -> f32 {
         if self.config.motion {
-            self.treble
+            self.visualizer.treble()
         } else {
             0.0
         }
@@ -6680,9 +6764,34 @@ impl App {
         self.spinner
     }
 
-    /// 0.0 (idle) .. 1.0 (just changed track) pulse for the player chrome.
+    /// 0.0 (idle) .. 1.0 (just changed track or a kick landed) pulse for the
+    /// player chrome. The track-change flourish and the beat detector share
+    /// the same glow so the UI breathes with the music.
     pub fn track_pulse(&self) -> f32 {
-        (self.track_flash as f32 / 18.0).clamp(0.0, 1.0)
+        let flash = (self.track_flash as f32 / 18.0).clamp(0.0, 1.0);
+        flash.max(self.beat() * 0.85)
+    }
+
+    /// True while something on screen is moving. The main loop uses this to
+    /// run at 60 fps during playback and drop to a calm 15 fps when idle.
+    pub fn animating(&self) -> bool {
+        if self.should_quit {
+            return false;
+        }
+        let playing = self.now_playing.is_some()
+            && self.config.motion
+            && self.cava_enabled
+            && !self.spectrum_hidden
+            && !self
+                .audio
+                .as_ref()
+                .map(|audio| audio.snapshot().paused)
+                .unwrap_or(true);
+        playing
+            || self.track_flash > 0
+            || self.search_loading
+            || self.resolving
+            || self.toast.is_some()
     }
 
     pub fn spinner_char(&self) -> &'static str {

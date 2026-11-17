@@ -15,6 +15,9 @@
 | **Link importing** | `Ctrl+L` accepts a YouTube/SoundCloud track or playlist, or a remote `.m3u`. Paste and go. |
 | **Radio autoplay** | `Ctrl+T` seeds a never-ending station from the current track so the silence never wins. |
 | **Taste autoplay** | When the queue ends, a local model continues with the same vibe — learned from plays, skips and tags. Occasional probes test whether your taste moved. `mfe taste` explains every pick. |
+| **Spotify-style recommender stack** | Implicit-feedback rewards, tag/artist content vectors, a co-listening graph, time-of-day context, a logistic model, bandit exploration and a scored shuffle — all local. `mfe taste profile`, `mfe taste contexts`, `mfe taste steer more <genre>`. See [RECOMMENDATIONS](RECOMMENDATIONS.md). |
+| **Slop screen** | `taste_filter = true` keeps slowed/reverb, sped-up, nightcore, 8D, loop and AI-cover re-uploads out of autoplay. They stay searchable and playable by hand. |
+| **Scored shuffle** | `s` does not pick randomly: it rescores the upcoming queue for freshness and ~25% artist spacing, and `next` picks the best of four remaining tracks. |
 | **MPRIS / media keys** | Works with `playerctl`, keyboard media keys and desktop widgets — even while detached. |
 | **Album art in the terminal** | Cover art renders as truecolor half-blocks in the inspector — no sixel or Kitty protocol required. |
 | **Cava visualiser** | `Ctrl+V` toggles a smoothed spectrum panel with fast-rise peak caps, coloured by frequency. The same energy drives every animation. |

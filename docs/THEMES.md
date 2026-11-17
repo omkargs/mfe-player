@@ -2,7 +2,7 @@
 
 > Part of the [MFE Player](../README.md) manual.
 
-14 built-in themes, live cycling, and wallpaper-derived palettes.
+17 built-in themes, live cycling, and wallpaper-derived palettes.
 
 ---
 
@@ -10,7 +10,7 @@
 
 `Alt+T` cycles live and writes the choice back to `config.toml` **without deleting your comments**.
 
-`mfe` · `gruvbox` · `nord` · `mono` · `matrix` · `rose` · `catppuccin` · `dracula` · `tokyo-night` · `solarized` · `amber` · `ocean`
+`mfe` · `gruvbox` · `nord` · `mono` · `matrix` · `rose` · `catppuccin` · `catppuccin-latte` · `dracula` · `tokyo-night` · `solarized` · `amber` · `ocean` · `rose-pine` · `kanagawa` · `everforest` · `one-dark`
 
 Set one permanently:
 
@@ -22,7 +22,7 @@ No theme fits? Copy `src/theme.rs`, add 13 colours, open a PR. It's genuinely th
 
 **Blending with your wallpaper.** Two separate problems, two switches:
 
-1. **Stop covering it.** `Alt+W` (or `transparent = true`) leaves the base background unpainted, so whatever transparency or blur your terminal already has — and therefore your wallpaper — shows through. Panels and popups stay solid, so text stays readable even over a busy photo.
+1. **Stop covering it.** `Alt+W` (or `transparent = true`) leaves every background layer unpainted — base, panels and popups — so whatever transparency or blur your terminal already has (and therefore your wallpaper) shows through. Text and borders keep their palette colours, so contrast is unchanged.
 2. **Match its colours.** `theme = "wallpaper"` reads the wallpaper your compositor is actually using — swww, hyprpaper, GNOME, Plasma, macOS or Windows — and derives the panel and accent colours from it. Dark wallpaper, dark panels. Warm sunset, warm accent. Or point it at a specific file with `wallpaper = "/path/to/image.jpg"`, or run `mfe theme adopt` once.
 
 ```bash
@@ -37,7 +37,7 @@ Your terminal still does the actual blurring — MFE just stops painting over it
 
 - **Rounded borders** on every panel, popup and dialog — one border type, applied everywhere.
 - **Truecolor gradient wordmark** in the header and an eighth-block progress bar (`▏▎▍▌▋▊▉`) with a gradient fill and a smooth head, instead of a flat gauge.
-- **Solid chrome, transparent base.** `Alt+W` removes only the base background; lists, popups and the inspector keep their own panel colour, so text survives a busy photo.
+- **No painted background at all.** `Alt+W` resets the base, panel and popup backgrounds to the terminal's own, so the wallpaper (and its blur) shows through the whole UI. Borders, text and gradients stay truecolor, so contrast survives a busy photo.
 - **Wallpaper palette** keeps the wallpaper's hue in the dark panels, pulls a vivid accent from its dominant colour and rotates the hue for a second accent. Green, yellow and red stay semantic so status still means something.
 - **Graceful fallbacks.** No truecolor? The palettes approximate. No wallpaper detected? The palette half is skipped instead of guessing.
 

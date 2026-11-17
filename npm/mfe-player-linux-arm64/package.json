@@ -1,6 +1,6 @@
 {
   "name": "mfe-player-linux-arm64",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "mfe-player binary for Linux arm64 (glibc)",
   "license": "MIT",
   "repository": {

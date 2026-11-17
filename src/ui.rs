@@ -288,15 +288,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .as_ref()
         .map(|audio| audio.snapshot().paused)
         .unwrap_or(true);
-    let wave = app
-        .cava
-        .as_ref()
-        .filter(|_| !paused)
-        .map(|cava| cava.values())
-        .unwrap_or_default()
-        .into_iter()
-        .map(|value| value as f32)
-        .collect::<Vec<f32>>();
+    // Compact wave meters read the mel-spaced engine output so they match the
+    // main spectrum, and freeze honestly when playback is paused.
+    let wave = if paused {
+        Vec::new()
+    } else {
+        app.spectrum_levels(32)
+    };
     if let Ok(mut slot) = UI_WAVE.lock() {
         *slot = wave;
     }
@@ -769,7 +767,8 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
-    let cava_right = app.cava_enabled
+    let cava_right = !app.spectrum_hidden
+        && app.cava_enabled
         && app.cava.is_some()
         && app.config.cava_position.eq_ignore_ascii_case("right");
     let cava_width = if cava_right && area.width >= 96 {
@@ -782,7 +781,7 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         0
     };
-    let cava_left = app.cava_enabled && cava_width == 0;
+    let cava_left = !app.spectrum_hidden && app.cava_enabled && cava_width == 0;
 
     // Narrow terminals get the list, not a 22-column sidebar glued to a
     // 16-column list. The number keys still switch views.
@@ -942,13 +941,10 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect, cava_left: bool) {
     }
 }
 
-/// Peak-hold caps for the spectrum. Static state is fine: cava is drawn from
-/// one thread and resets when the panel width changes.
-static CAVA_PEAKS: std::sync::Mutex<Vec<f64>> = std::sync::Mutex::new(Vec::new());
-/// Last frame used when motion is off (or playback is paused), so the
-/// visualiser freezes instead of lying about what is playing.
-static CAVA_FROZEN: std::sync::Mutex<(Vec<f64>, Vec<f64>)> =
-    std::sync::Mutex::new((Vec::new(), Vec::new()));
+/// One cell can show eight vertical steps with the Unicode block glyphs.
+/// This is what gives the bars sub-cell resolution instead of one glyph per
+/// row.
+const EIGHTHS: [&str; 7] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇"];
 
 fn frequency_colour(position: f32, lift: f32) -> Color {
     let base = if position < 0.34 {
@@ -962,6 +958,11 @@ fn frequency_colour(position: f32, lift: f32) -> Color {
 }
 
 fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
+    // Alt+S removes the panel from the layout; this guard is belt-and-braces
+    // for the narrow-terminal sidebar path.
+    if app.spectrum_hidden {
+        return;
+    }
     if area.height < 3 || area.width < 6 {
         return;
     }
@@ -1040,8 +1041,11 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let values = cava.values();
-    if values.is_empty() {
+    let width = inner.width as usize;
+    let height = inner.height as usize;
+    let levels = app.spectrum_levels(width);
+    let peak_line = app.spectrum_peaks(width);
+    if levels.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled(
                 " waiting for audio… ",
@@ -1053,72 +1057,49 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let width = inner.width as usize;
-    let height = inner.height as usize;
-    // Per-column levels for this frame, plus peak-hold caps that fall slowly.
-    let mut levels = Vec::with_capacity(width);
-    for col in 0..width {
-        let index = col * values.len() / width.max(1);
-        levels.push(values.get(index).copied().unwrap_or(0.0).clamp(0.0, 1.25));
-    }
     let paused = app.audio_snapshot().paused;
-    let (levels, peak_line) = if motion() && !paused {
-        let mut peaks = CAVA_PEAKS
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if peaks.len() != width {
-            peaks.resize(width, 0.0);
-        }
-        for (peak, level) in peaks.iter_mut().zip(levels.iter()) {
-            // Fast rise, slow fall: looks like a real analyser.
-            if *level > *peak {
-                *peak = *level;
-            } else {
-                *peak = (*peak - 0.012 * (1.0 + energy() as f64)).max(*level);
-            }
-        }
-        let line = peaks.clone();
-        if let Ok(mut frozen) = CAVA_FROZEN.lock() {
-            *frozen = (levels.clone(), line.clone());
-        }
-        (levels, line)
-    } else {
-        let mut frozen = CAVA_FROZEN
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if frozen.0.len() != width {
-            frozen.0 = levels.clone();
-            frozen.1 = levels.clone();
-        }
-        (frozen.0.clone(), frozen.1.clone())
-    };
+    let all_quiet = levels.iter().all(|level| *level < 0.01);
+    if paused && all_quiet {
+        frame.render_widget(
+            Paragraph::new(Span::styled(" paused ", Style::default().fg(th().faint)))
+                .alignment(ratatui::layout::Alignment::Center)
+                .style(Style::default().bg(theme::panel())),
+            inner,
+        );
+        return;
+    }
 
-    let mut lines = Vec::new();
+    // The engine already peak-holds and springs; here we only quantise each
+    // column into eighths of a cell and paint the gradient. `pulse` is the
+    // beat glow shared with the rest of the chrome.
+    let beat = pulse();
+    let mut lines = Vec::with_capacity(height);
     for row in 0..height {
-        let mut spans = Vec::new();
+        let mut spans = Vec::with_capacity(width);
+        let from_bottom = (height - row) as f32;
+        let cell_floor = (from_bottom - 1.0) * 8.0;
         for col in 0..width {
-            let value = levels[col];
-            let level = value * height as f64;
-            let threshold = (height - row) as f64;
+            let level = levels[col].max(0.0) * height as f32 * 8.0;
+            let peak = peak_line[col].max(0.0) * height as f32 * 8.0;
             let horizontal = col as f32 / width.max(1) as f32;
-            // Low frequencies sit green, mids teal, highs accent. The tip of
-            // each bar and its peak cap get a little brighter.
-            let at_tip = level >= threshold && level - threshold < 1.0;
-            let lift = if at_tip { 0.32 } else { 0.0 };
+            // Brighter at the tip and on every kick, like a real analyser.
+            let lift = 0.16 + beat * 0.45 + (from_bottom / height as f32) * 0.10;
             let colour = frequency_colour(horizontal, lift);
-            let peak_level = peak_line[col] * height as f64;
-            let (glyph, color) = if at_tip {
-                ("▄", glow(colour, th().fg, 0.3 + energy() * 0.2))
-            } else if level >= threshold {
-                ("█", colour)
-            } else if (peak_level - threshold).abs() < 0.6 {
-                ("▔", glow(colour, th().fg, 0.1))
-            } else if level > threshold - 0.85 {
-                ("▄", glow(colour, th().border, 0.35))
+
+            let cell = if level >= cell_floor + 8.0 {
+                Some(("█", colour))
+            } else if level > cell_floor {
+                let eighth = ((level - cell_floor).ceil() as usize).clamp(1, 7);
+                Some((EIGHTHS[eighth - 1], glow(colour, th().fg, lift)))
+            } else if peak > cell_floor && peak < cell_floor + 8.0 {
+                Some(("▔", glow(colour, th().fg, 0.10 + beat * 0.25)))
             } else {
-                (" ", th().faint)
+                None
             };
-            spans.push(Span::styled(glyph, Style::default().fg(color)));
+            spans.push(match cell {
+                Some((glyph, colour)) => Span::styled(glyph, Style::default().fg(colour)),
+                None => Span::styled(" ", Style::default().fg(th().faint)),
+            });
         }
         lines.push(Line::from(spans));
     }
@@ -3021,6 +3002,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         key("Alt+R", "replaygain: off / track / album for tagged files"),
         key("Alt+N", "toggle loudness normalisation"),
         key("Ctrl+V", "toggle the cava spectrum panel"),
+        key("Alt+S", "hide / show the spectrum panel (no empty gutter)"),
         key("inspector", "album art loads automatically for the playing track"),
         key("Alt+T", "cycle colour theme (wallpaper = sample the desktop)"),
         key("Alt+W", "transparent background (let the terminal show the wallpaper)"),

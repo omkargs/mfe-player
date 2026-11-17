@@ -94,8 +94,54 @@ The short list — the complete one lives in [docs/FEATURES.md](docs/FEATURES.md
 | **Offline downloads** | `d` rips a track to disk and prefers the local copy next time. Planes and bad Wi-Fi are supported. |
 | **Link importing** | `Ctrl+L` accepts a YouTube/SoundCloud track or playlist, or a remote `.m3u`. Paste and go. |
 | **Radio autoplay** | `Ctrl+T` seeds a never-ending station from the current track so the silence never wins. |
+| **Spotify-style recommendations, locally** | Implicit feedback, a co-listening graph, time-of-day context, bandit exploration, content scoring and a slop filter — all in one `taste.json`. No account, no server. |
 
 → **The other 20+**, screenshots of the layout and the fine print: [docs/FEATURES.md](docs/FEATURES.md)
+
+---
+
+## 🎧 The radio has a taste model
+
+Autoplay is not "search the artist again". MFE keeps a local profile and runs a
+layered recommender over it — the same shape as Spotify's stack, sized for one
+machine:
+
+| Stage | What it does here |
+|---|---|
+| **Implicit feedback** | Plays, completions, likes, repeats and early skips become continuous rewards (a 92% listen beats a 51% one). |
+| **Content** | Genre/plugin tags and title tokens, scored by cosine against your long-term profile. |
+| **Behaviour** | A track/artist co-listening graph built from consecutive plays. The local stand-in for collaborative filtering. |
+| **Context** | A CoSeRNN-style time bucket (early morning → night, weekday/weekend) learns that 9am and 1am are different people. |
+| **Logistic model** | Online SGD over tag/artist/context features — the single-user shape of Logistic MF. |
+| **Bandit** | Beta-Bernoulli arms per genre with Thompson-style sampling and epsilon-greedy exploration (the BaRT idea). |
+| **Ordering** | Shuffle generates three sequences and keeps the one that spaces artists ~25% apart and pushes recent tracks back. |
+| **Quality** | Slowed/sped-up/nightcore/8D/AI-cover re-uploads are kept out of autoplay. |
+
+```bash
+mfe taste profile               # genres, arms, context, graph size
+mfe taste explain               # every component of the last pick
+mfe taste contexts              # what each time of day has learned
+mfe taste steer more synthwave  # nudge the model directly
+mfe taste filter on|off         # the slop screen
+```
+
+Everything is in `~/.config/mfe-player/taste.json`. No account, no upload, no
+listening history leaving the machine. The honest limits (no other users, no
+audio CNN, no web NLP) are spelled out in
+[docs/RECOMMENDATIONS.md](docs/RECOMMENDATIONS.md).
+
+---
+
+## 🍚 Built to live in a rice
+
+MFE is the music player your Hyprland / yabai / GlazeWM setup was missing:
+
+- **Transparency that actually works** — `Alt+W` hands every background cell (base, panels, popups) back to your terminal, so kitty/Ghostty/WezTerm/Windows Terminal opacity and blur show the wallpaper. Works on Linux, macOS **and** Windows.
+- **60 fps in-process visualiser** — mel-spaced bands, asymmetric spring attack/release, peak hold, beat pulse and 1/8-cell block bars. `cava` only captures (PipeWire/PulseAudio, CoreAudio incl. the macOS 14.2+ output tap, WASAPI), so the spectrum finally moves with the frame rate instead of the poll timer.
+- **Hide it when you want wallpaper only** — `Alt+S` removes the spectrum panel from the layout with no empty gutter. cava keeps running, so borders and gradients still pulse with the kick.
+- **A palette for every rice** — `catppuccin` (+ `catppuccin-latte`), `everforest`, `one-dark`, `tokyo-night`, `gruvbox`, `nord`, `dracula`, `kanagawa`, `rose-pine`, and `wallpaper`, which samples the image your compositor is actually showing. `Alt+T` cycles.
+- **Mini spectrum in your bar** — `mfe status --json` now carries `spectrum`, `pulse` and `energy`; [`contrib/mfe-spectrum.sh`](contrib/mfe-spectrum.sh) renders it as `▁▂▃▄▅▆▇█` for waybar, sketchybar, polybar or YASB without spawning a second cava.
+- **Recipes per desktop** — [docs/RICING.md](docs/RICING.md) has copy-paste configs for Hyprland + waybar, macOS + sketchybar, and the Windows stack (GlazeWM/Komorebi + YASB + Rainmeter + Windows Terminal).
 
 ---
 
@@ -128,7 +174,9 @@ Everything longer than a tweet lives in [docs/](docs/):
 | [Keys](docs/KEYS.md) | every hotkey, the full map |
 | [Daemon](docs/DAEMON.md) | background playback and the CLI verbs that drive it |
 | [Scripting](docs/SCRIPTING.md) | waybar/polybar/tmux JSON, one-liners |
-| [Themes](docs/THEMES.md) | 14 built-ins, wallpaper palettes, transparency |
+| [Ricing](docs/RICING.md) | Hyprland/waybar, macOS/sketchybar, GlazeWM/YASB, status-spectrum |
+| [Recommendations](docs/RECOMMENDATIONS.md) | the local Spotify-style stack, how to read and steer it |
+| [Themes](docs/THEMES.md) | 17 built-ins, wallpaper palettes, transparency |
 | [Plugins](docs/PLUGINS.md) | the Python JSON contract, bundled providers |
 | [Architecture](docs/ARCHITECTURE.md) | how the pieces talk to each other |
 | [Features](docs/FEATURES.md) | the complete feature table |

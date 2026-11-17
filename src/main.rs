@@ -14,7 +14,9 @@ mod mpris;
 mod notify;
 mod platform;
 mod plugins;
+mod recommend;
 mod social;
+mod spectrum;
 mod state;
 mod taste;
 mod theme;
@@ -439,13 +441,54 @@ fn main() -> Result<()> {
                 "status" | "summary" => {
                     print!("{}", taste.summary());
                 }
-                "explain" | "last" => {
+                "explain" | "last" | "why" => {
                     print!("{}", taste.explain_last());
+                }
+                "profile" | "model" => {
+                    print!("{}", taste.model_summary());
+                }
+                "contexts" | "context" => {
+                    print!("{}", taste.context_summary());
+                }
+                "steer" => {
+                    let direction = raw_args.get(2).map(String::as_str).unwrap_or("more");
+                    let tag = raw_args
+                        .get(3..)
+                        .map(|words| words.join(" "))
+                        .unwrap_or_default();
+                    if !["more", "less"].contains(&direction) || tag.trim().is_empty() {
+                        eprintln!("usage: mfe taste steer <more|less> <genre or tag>");
+                        return Ok(());
+                    }
+                    println!("{}", taste.steer(&tag, direction == "more"));
+                    taste.flush();
+                }
+                "filter" => {
+                    let value = raw_args.get(2).map(String::as_str).unwrap_or("status");
+                    match value {
+                        "on" | "off" => {
+                            config::set_line(
+                                "taste_filter",
+                                if value == "on" { "true" } else { "false" },
+                            );
+                            println!(
+                                "recommendation quality filter {}",
+                                if value == "on" { "on" } else { "off" }
+                            );
+                        }
+                        _ => {
+                            let (settings, _) = config::load_config();
+                            println!(
+                                "quality filter is {} · `mfe taste filter on|off`",
+                                if settings.taste_filter { "on" } else { "off" }
+                            );
+                        }
+                    }
                 }
                 "reset" => {
                     let scope = raw_args.get(2).map(String::as_str).unwrap_or("all");
-                    if !["session", "all", "probes"].contains(&scope) {
-                        eprintln!("usage: mfe taste reset [session|all|probes]");
+                    if !["session", "all", "probes", "contexts"].contains(&scope) {
+                        eprintln!("usage: mfe taste reset [session|all|probes|contexts]");
                         return Ok(());
                     }
                     taste.reset(scope);
@@ -474,7 +517,7 @@ fn main() -> Result<()> {
                 }
                 _ => {
                     eprintln!(
-                        "usage: mfe taste [status|explain|reset [session|all|probes]|like|dislike]"
+                        "usage: mfe taste [status|explain|why|profile|contexts|steer|filter|reset [session|all|probes|contexts]|like|dislike]"
                     );
                 }
             }
@@ -565,7 +608,9 @@ fn completions(shell: &str) -> String {
 complete -c mfe -f -a "status current share theme taste discord motion doctor cache update play pause toggle next prev mute volume seek shuffle repeat stop completions" -d "MFE Player"
 complete -c mfe -n "__fish_seen_subcommand_from status" -l json -d "JSON output"
 complete -c mfe -n "__fish_seen_subcommand_from completions" -a "bash zsh fish powershell"
-complete -c mfe -n "__fish_seen_subcommand_from taste" -a "status explain reset like dislike" -d "Taste profile"
+complete -c mfe -n "__fish_seen_subcommand_from taste" -a "status explain why profile contexts steer filter reset like dislike" -d "Taste profile"
+complete -c mfe -n "__fish_seen_subcommand_from filter" -a "on off status" -d "Recommendation quality filter"
+complete -c mfe -n "__fish_seen_subcommand_from steer" -a "more less" -d "Nudge the taste profile"
 complete -c mfe -n "__fish_seen_subcommand_from discord" -a "on off status client asset" -d "Discord presence"
 complete -c mfe -n "__fish_seen_subcommand_from motion" -a "on off status" -d "Interface motion"
 "#
@@ -611,7 +656,7 @@ _mfe() {
       elif [[ $words[2] == theme ]]; then
         _values 'action' adopt list
       elif [[ $words[2] == taste ]]; then
-        _values 'action' status explain reset like dislike
+        _values 'action' status explain why profile contexts steer filter reset like dislike
       elif [[ $words[2] == discord ]]; then
         _values 'action' on off status client asset
       elif [[ $words[2] == motion ]]; then
@@ -648,7 +693,7 @@ Register-ArgumentCompleter -Native -CommandName mfe,mfe-player -ScriptBlock {
         @('on','off','status') | Where-Object { $_ -like "$wordToComplete*" } |
             ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
     } elseif ($words[1] -eq 'taste') {
-        @('status','explain','reset','like','dislike') | Where-Object { $_ -like "$wordToComplete*" } |
+        @('status','explain','why','profile','contexts','steer','filter','reset','like','dislike') | Where-Object { $_ -like "$wordToComplete*" } |
             ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
     } elseif ($words[1] -eq 'shuffle') {
         @('on','off','toggle') | Where-Object { $_ -like "$wordToComplete*" } |
@@ -677,7 +722,7 @@ _mfe_player() {
   elif [ "$prev" = "theme" ]; then
     COMPREPLY=( $(compgen -W "adopt list" -- "$cur") )
   elif [ "$prev" = "taste" ]; then
-    COMPREPLY=( $(compgen -W "status explain reset like dislike" -- "$cur") )
+    COMPREPLY=( $(compgen -W "status explain why profile contexts steer filter reset like dislike" -- "$cur") )
   elif [ "$prev" = "discord" ]; then
     COMPREPLY=( $(compgen -W "on off status client asset" -- "$cur") )
   elif [ "$prev" = "motion" ]; then
@@ -830,59 +875,81 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) ->
     let _ = std::fs::remove_file(config::daemon_control_path());
     let mut title = String::new();
     let mut last_terminal_check = Instant::now();
+    // Decoupled clocks: input is polled every few milliseconds, while the app
+    // ticks and the screen redraws at 60 fps whenever something is moving and
+    // settles to a calm ~24 fps when idle. The old loop slept 50 ms *after*
+    // drawing, which is why the TUI and spectrum felt a beat behind the music.
+    let mut last_frame = Instant::now() - Duration::from_secs(1);
+    let mut force_draw = true;
     while !app.should_quit {
-        app.tick();
-        // `mfe next`, `mfe pause`, ... land here while the TUI owns the
-        // player, so CLI control works whether the daemon or the UI is up.
-        let commands = daemon::drain_control();
-        if commands.iter().any(|command| command.trim() == "handoff") {
-            // Another `mfe` is taking over: hand playback to the daemon and
-            // exit so only one UI owns the player.
-            app.handoff_for_external_close();
-            continue;
-        }
-        if !commands.is_empty() {
-            app.apply_remote(&commands);
-        }
-        if external_close_requested() {
-            app.handoff_for_external_close();
-            break;
-        }
-        if last_terminal_check.elapsed() >= Duration::from_millis(250) {
-            last_terminal_check = Instant::now();
-            if terminal_gone() {
+        let animating = app.animating();
+        let draw_interval = if animating {
+            Duration::from_millis(16)
+        } else {
+            Duration::from_millis(42)
+        };
+        let input_poll = if animating {
+            Duration::from_millis(5)
+        } else {
+            Duration::from_millis(18)
+        };
+
+        if force_draw || last_frame.elapsed() >= draw_interval {
+            force_draw = false;
+            last_frame = Instant::now();
+            app.tick();
+            // `mfe next`, `mfe pause`, ... land here while the TUI owns the
+            // player, so CLI control works whether the daemon or the UI is up.
+            let commands = daemon::drain_control();
+            if commands.iter().any(|command| command.trim() == "handoff") {
+                // Another `mfe` is taking over: hand playback to the daemon and
+                // exit so only one UI owns the player.
+                app.handoff_for_external_close();
+                continue;
+            }
+            if !commands.is_empty() {
+                app.apply_remote(&commands);
+            }
+            if external_close_requested() {
                 app.handoff_for_external_close();
                 break;
             }
-        }
-        if let Err(err) = terminal.draw(|frame| ui::draw(frame, app)) {
-            // A closed terminal makes every later write fail. Keep the music
-            // (and its MPRIS card) alive by handing it to the daemon instead
-            // of dying with the window.
-            app.handoff_for_external_close();
-            if !app.detached_on_quit {
-                return Err(err.into());
+            if last_terminal_check.elapsed() >= Duration::from_millis(250) {
+                last_terminal_check = Instant::now();
+                if terminal_gone() {
+                    app.handoff_for_external_close();
+                    break;
+                }
             }
-            break;
-        }
+            if let Err(err) = terminal.draw(|frame| ui::draw(frame, app)) {
+                // A closed terminal makes every later write fail. Keep the music
+                // (and its MPRIS card) alive by handing it to the daemon instead
+                // of dying with the window.
+                app.handoff_for_external_close();
+                if !app.detached_on_quit {
+                    return Err(err.into());
+                }
+                break;
+            }
 
-        let wanted = app.terminal_title();
-        if wanted != title {
-            if execute!(terminal.backend_mut(), SetTitle(&wanted)).is_err() {
+            let wanted = app.terminal_title();
+            if wanted != title {
+                if execute!(terminal.backend_mut(), SetTitle(&wanted)).is_err() {
+                    app.handoff_for_external_close();
+                    break;
+                }
+                title = wanted;
+            }
+
+            if external_close_requested() {
                 app.handoff_for_external_close();
                 break;
             }
-            title = wanted;
-        }
-
-        if external_close_requested() {
-            app.handoff_for_external_close();
-            break;
         }
 
         // `poll`/`read` can fail with EINTR when a signal arrives mid-wait.
         // That is not an error: the flag above is the real message.
-        match wait_for_input(Duration::from_millis(50)) {
+        match wait_for_input(input_poll) {
             Input::Timeout => {}
             Input::Closed => {
                 app.handoff_for_external_close();
@@ -900,9 +967,13 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) ->
                         if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                     {
                         app.handle_key(key);
+                        force_draw = true;
                     }
-                    Ok(Event::Mouse(mouse)) => app.handle_mouse(mouse),
-                    Ok(Event::Resize(_, _)) => {}
+                    Ok(Event::Mouse(mouse)) => {
+                        app.handle_mouse(mouse);
+                        force_draw = true;
+                    }
+                    Ok(Event::Resize(_, _)) => force_draw = true,
                     Ok(_) => {}
                     Err(err) => {
                         // EOF/EIO from a vanished terminal is not a crash:

@@ -21,10 +21,17 @@ max_volume = 130          # ceiling for +/- and the clickable meter
 speed_step = 0.1          # [ and ] speed step
 prefetch = true
 radio = false
+autoplay = "taste"        # off | similar | taste (what happens when the queue ends)
+taste_enabled = true      # learn the local profile from plays and skips
+taste_filter = true       # keep slowed/sped-up/nightcore/AI-cover slop out of autoplay
+autoplay_explore = 0.12   # epsilon-greedy share for the bandit (0..1)
+autoplay_probe = true     # occasional deliberate out-of-profile track
+autoplay_probe_every = 10 # ...every N autoplay picks
 mouse = true
 cava = true
 cava_position = "right"   # right | left
 cava_bars = 28
+cava_hidden = false       # Alt+S: remove the panel, keep the audio-reactive theme
 normalize = false
 eq = "flat"               # flat | bass | vocal | night | loud
 audio_device = ""         # e.g. "alsa/hdmi:CARD=HDMI"

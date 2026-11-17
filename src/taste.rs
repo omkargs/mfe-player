@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config;
 use crate::models::Track;
+use crate::recommend::{self, Breakdown, Lcg, Profile, Signals};
 
 const LONG_TERM_HALF_LIFE_DAYS: f64 = 30.0;
 const SESSION_HALF_LIFE_MINUTES: f64 = 90.0;
@@ -196,6 +197,18 @@ pub struct LastPick {
     #[serde(default)]
     pub total: f64,
     #[serde(default)]
+    pub content: f64,
+    #[serde(default)]
+    pub behavior: f64,
+    #[serde(default)]
+    pub context: f64,
+    #[serde(default)]
+    pub logistic: f64,
+    #[serde(default)]
+    pub bandit: f64,
+    #[serde(default)]
+    pub freshness: f64,
+    #[serde(default)]
     pub reason: String,
     #[serde(default)]
     pub probe: bool,
@@ -240,6 +253,10 @@ pub struct Taste {
     pub known_tags: HashSet<String>,
     #[serde(default)]
     pub last_pick: Option<LastPick>,
+    /// Co-listening graph, bandit posteriors, logistic weights and context
+    /// affinities — the parts of the recommender that are not simple tags.
+    #[serde(default)]
+    pub signals: Signals,
     /// True once history has been used to warm the profile. A manual reset
     /// clears the profile but keeps this true, so we do not silently rebuild it.
     #[serde(default)]
@@ -268,6 +285,7 @@ impl Default for Taste {
             blocked: HashMap::new(),
             known_tags: HashSet::new(),
             last_pick: None,
+            signals: Signals::default(),
             seeded: false,
             current: None,
             dirty: false,
@@ -285,22 +303,34 @@ pub struct BatchPlan {
 }
 
 #[derive(Debug, Clone)]
-struct ScoreParts {
-    tag: f64,
-    artist: f64,
-    session: f64,
-    novelty: f64,
-    total: f64,
-    primary_tag: String,
-    reason: String,
-}
-
-#[derive(Debug, Clone)]
 struct Candidate {
     track: Track,
     tags: HashMap<String, f64>,
-    parts: ScoreParts,
+    parts: Breakdown,
     artist_key: String,
+}
+
+/// Options for one autoplay batch. `explore` is the epsilon-greedy share from
+/// the BaRT layer; `filter` turns on the slop/spam screen.
+#[derive(Debug, Clone, Copy)]
+pub struct PlanOptions {
+    pub limit: usize,
+    pub probe: bool,
+    pub probe_every: u32,
+    pub filter: bool,
+    pub explore: f64,
+}
+
+impl Default for PlanOptions {
+    fn default() -> Self {
+        Self {
+            limit: 15,
+            probe: true,
+            probe_every: 3,
+            filter: true,
+            explore: 0.15,
+        }
+    }
 }
 
 impl Taste {
@@ -411,11 +441,15 @@ impl Taste {
         self.known_tags.extend(explicit_tags(track));
         self.session.plays = self.session.plays.saturating_add(1);
         self.session.last_at = now;
+        let tags = tags_for(track);
+        // Consecutive plays become the local co-listening graph. Skips still
+        // create a weak edge; a finished track strengthens it in `finish`.
+        self.signals.observe_start(track, &tags);
         self.current = Some(Observation {
             track_id: track.id.clone(),
             title: track.title.clone(),
             artist: track.artist.clone(),
-            tags: tags_for(track),
+            tags,
             position: 0.0,
             duration: track.duration.unwrap_or(0) as f64,
             auto,
@@ -573,6 +607,16 @@ impl Taste {
         } else {
             0.0
         };
+        if let Some(reward) = recommend::reward_for(kind, fraction) {
+            let context = recommend::current_context();
+            self.signals.observe_outcome(recommend::Outcome {
+                id: &observation.track_id,
+                artist: &observation.artist,
+                tags: &observation.tags,
+                reward,
+                context: &context,
+            });
+        }
         self.events.push_front(TasteEvent {
             id: observation.track_id.clone(),
             title: observation.title.clone(),
@@ -618,10 +662,19 @@ impl Taste {
     /// the ranking logic directly testable.
     #[cfg(test)]
     pub fn rank(&mut self, candidates: &[Track], recent: &[Track], limit: usize) -> Vec<Track> {
-        self.rank_candidates(candidates, recent, limit)
+        self.rank_candidates(candidates, recent, limit, true, 0.15)
             .into_iter()
             .map(|candidate| candidate.track)
             .collect()
+    }
+
+    fn played_at_map(&self) -> HashMap<String, u64> {
+        let mut played = HashMap::new();
+        // `events` is newest-first, so the first entry per id is the latest.
+        for event in &self.events {
+            played.entry(event.id.clone()).or_insert(event.at);
+        }
+        played
     }
 
     fn rank_candidates(
@@ -629,6 +682,8 @@ impl Taste {
         candidates: &[Track],
         recent: &[Track],
         limit: usize,
+        filter: bool,
+        explore: f64,
     ) -> Vec<Candidate> {
         if limit == 0 {
             return Vec::new();
@@ -643,31 +698,55 @@ impl Taste {
         let last_primary = recent
             .first()
             .and_then(|track| primary_tag(&tags_for(track)));
+        let played_at = self.played_at_map();
+        let context = recommend::current_context();
+        let mut rng = Lcg::from_clock(limit as u64);
+        let skipped_now =
+            |signals: &Signals, id: &str| signals.skipped.get(id).is_some_and(|until| *until > now);
 
         let mut seen = HashSet::new();
         let mut pool = Vec::new();
-        for track in candidates {
-            if !track.is_valid()
-                || !seen.insert(track.id.clone())
-                || recent_ids.contains(&track.id)
-                || self
-                    .blocked
-                    .get(&track.id)
-                    .is_some_and(|until| *until > now)
-            {
-                continue;
+        {
+            let profile = Profile {
+                long_term: &self.long_term,
+                session: &self.session,
+                signals: &self.signals,
+                context: &context,
+                played_at: &played_at,
+                recent_artists: &recent_artists,
+                recent,
+                last_primary: last_primary.as_deref(),
+                explore,
+            };
+            for track in candidates {
+                if !track.is_valid()
+                    || !seen.insert(track.id.clone())
+                    || recent_ids.contains(&track.id)
+                    || self
+                        .blocked
+                        .get(&track.id)
+                        .is_some_and(|until| *until > now)
+                    || skipped_now(&self.signals, &track.id)
+                {
+                    continue;
+                }
+                let tags = tags_for(track);
+                if tags.is_empty() {
+                    continue;
+                }
+                let parts = recommend::score(&profile, track, &tags, &mut rng);
+                // The quality screen rejects slop before it can be ranked, so
+                // one re-upload cannot win the batch on tag similarity alone.
+                if filter && parts.quality.is_some() {
+                    continue;
+                }
+                pool.push(Candidate {
+                    track: track.clone(),
+                    tags,
+                    artist_key: artist_key(&track.artist),
+                    parts,
+                });
             }
-            let tags = tags_for(track);
-            if tags.is_empty() {
-                continue;
-            }
-            let parts = self.score_parts(&tags, track, &recent_artists, last_primary.as_deref());
-            pool.push(Candidate {
-                track: track.clone(),
-                tags,
-                artist_key: artist_key(&track.artist),
-                parts,
-            });
         }
         if pool.is_empty() {
             return Vec::new();
@@ -725,11 +804,17 @@ impl Taste {
             self.last_pick = Some(LastPick {
                 title: top.track.title.clone(),
                 artist: top.track.artist.clone(),
-                tag_score: top.parts.tag,
+                tag_score: top.parts.content,
                 artist_score: top.parts.artist,
-                session_score: top.parts.session,
+                session_score: top.parts.context,
                 novelty: top.parts.novelty,
                 total: top.parts.total,
+                content: top.parts.content,
+                behavior: top.parts.behavior,
+                context: top.parts.context,
+                logistic: top.parts.logistic,
+                bandit: top.parts.bandit,
+                freshness: top.parts.freshness,
                 reason: top.parts.reason.clone(),
                 probe: false,
                 at: now,
@@ -739,28 +824,33 @@ impl Taste {
     }
 
     /// Rank a batch and optionally replace one early pick with a deliberate
-    /// out-of-profile probe from an adjacent tag.
+    /// out-of-profile probe from an adjacent or under-explored tag.
     pub fn plan_batch(
         &mut self,
         candidates: &[Track],
         recent: &[Track],
-        limit: usize,
-        probe_enabled: bool,
-        probe_every: u32,
+        options: PlanOptions,
     ) -> BatchPlan {
-        let mut picked = self.rank_candidates(candidates, recent, limit);
+        let limit = options.limit.max(1);
+        let mut picked =
+            self.rank_candidates(candidates, recent, limit, options.filter, options.explore);
         let mut probes = HashMap::new();
         if picked.is_empty() {
             return BatchPlan::default();
         }
 
-        let every = probe_every.max(1);
-        if probe_enabled
+        let every = options.probe_every.max(1);
+        if options.probe
             && self.session.plays >= 8
             && self.session.since_probe >= every
             && self.confidence() >= 0.55
         {
-            if let Some(tag) = self.adjacent_tag() {
+            // The adjacent tag is the interpretable probe; when the bandit has
+            // an arm it has barely tried, that uncertainty wins instead.
+            let tag = self
+                .adjacent_tag()
+                .or_else(|| self.signals.uncertain_tag(&self.known_tags));
+            if let Some(tag) = tag {
                 if !self
                     .probes
                     .cooldown_until
@@ -779,6 +869,11 @@ impl Taste {
                                 .blocked
                                 .get(&track.id)
                                 .is_some_and(|until| *until > now_unix())
+                            || self
+                                .signals
+                                .skipped
+                                .get(&track.id)
+                                .is_some_and(|until| *until > now_unix())
                         {
                             continue;
                         }
@@ -786,15 +881,15 @@ impl Taste {
                         if !tags.contains_key(&tag) {
                             continue;
                         }
-                        let total = self.score_parts(&tags, track, &HashSet::new(), None).total;
+                        let total = self.candidate_for(track, options.explore).parts.total;
                         if best.as_ref().is_none_or(|(_, seen)| total > *seen) {
                             best = Some((track, total));
                         }
                     }
                     if let Some((probe, _)) = best {
                         let insert_at = (picked.len() / 3).min(picked.len());
-                        picked.insert(insert_at, self.candidate_for(probe));
-                        picked.truncate(limit.max(1));
+                        picked.insert(insert_at, self.candidate_for(probe, options.explore));
+                        picked.truncate(limit);
                         probes.insert(probe.id.clone(), tag);
                     }
                 }
@@ -808,78 +903,30 @@ impl Taste {
         BatchPlan { tracks, probes }
     }
 
-    fn candidate_for(&self, track: &Track) -> Candidate {
+    fn candidate_for(&self, track: &Track, explore: f64) -> Candidate {
         let tags = tags_for(track);
+        let played_at = HashMap::new();
+        let recent_artists = HashSet::new();
+        let empty: Vec<Track> = Vec::new();
+        let context = recommend::current_context();
+        let profile = Profile {
+            long_term: &self.long_term,
+            session: &self.session,
+            signals: &self.signals,
+            context: &context,
+            played_at: &played_at,
+            recent_artists: &recent_artists,
+            recent: &empty,
+            last_primary: None,
+            explore,
+        };
+        let mut rng = Lcg::from_clock(track.id.len() as u64);
+        let parts = recommend::score(&profile, track, &tags, &mut rng);
         Candidate {
             track: track.clone(),
             artist_key: artist_key(&track.artist),
-            parts: self.score_parts(&tags, track, &HashSet::new(), None),
+            parts,
             tags,
-        }
-    }
-
-    fn score_parts(
-        &self,
-        tags: &HashMap<String, f64>,
-        track: &Track,
-        recent_artists: &HashSet<String>,
-        last_primary: Option<&str>,
-    ) -> ScoreParts {
-        let tag = self.tag_similarity(tags);
-        let session = self.session_similarity(tags);
-        let artist = self.artist_similarity(&track.artist);
-        let primary = primary_tag(tags).unwrap_or_default();
-        let same_vibe_penalty = last_primary.is_some_and(|last| last == primary);
-        let artist_novel = !recent_artists.contains(&artist_key(&track.artist));
-        let novelty = if artist_novel {
-            if same_vibe_penalty {
-                0.6
-            } else {
-                1.0
-            }
-        } else {
-            0.0
-        };
-        let explore = if self
-            .top_effective_tags(3)
-            .iter()
-            .any(|(tag, _)| tag == &primary)
-        {
-            0.0
-        } else {
-            0.3
-        };
-        // A genre the listener has repeatedly skipped tonight must not sneak
-        // back in just because MMR wants variety. Penalise in proportion to the
-        // vetoed tag weight so one stray skip is a nudge, five is decisive.
-        let veto: f64 = tags
-            .iter()
-            .filter(|(tag, _)| {
-                self.session
-                    .tags
-                    .get(*tag)
-                    .is_some_and(|weight| *weight <= -2.0)
-            })
-            .map(|(_, weight)| *weight)
-            .sum();
-        let total = 0.35 * tag + 0.25 * artist + 0.20 * session + 0.10 * novelty + 0.05 * explore
-            - 1.2 * veto;
-        let mut reason = self.reason_for(tags);
-        if veto > 0.5 {
-            reason = if reason.is_empty() {
-                format!("session veto ({veto:.1})")
-            } else {
-                format!("session veto ({veto:.1}) · {reason}")
-            };
-        }
-        ScoreParts {
-            tag,
-            artist,
-            session,
-            novelty,
-            total,
-            primary_tag: primary,
-            reason,
         }
     }
 
@@ -894,73 +941,6 @@ impl Taste {
         } else {
             combined
         }
-    }
-
-    fn tag_similarity(&self, tags: &HashMap<String, f64>) -> f64 {
-        let mut dot = 0.0;
-        let mut candidate_norm = 0.0;
-        for (tag, weight) in tags {
-            candidate_norm += weight * weight;
-            dot += weight * self.effective_tag(tag);
-        }
-        let mut profile_norm = 0.0;
-        let mut keys: HashSet<&String> = HashSet::new();
-        keys.extend(self.long_term.tags.keys());
-        keys.extend(self.session.tags.keys());
-        for key in keys {
-            let weight = self.effective_tag(key);
-            profile_norm += weight * weight;
-        }
-        if candidate_norm <= 0.0 || profile_norm <= 0.0 {
-            return 0.0;
-        }
-        (dot / (candidate_norm.sqrt() * profile_norm.sqrt())).clamp(-1.0, 1.0)
-    }
-
-    fn session_similarity(&self, tags: &HashMap<String, f64>) -> f64 {
-        let mut dot = 0.0;
-        let mut candidate_norm = 0.0;
-        for (tag, weight) in tags {
-            candidate_norm += weight * weight;
-            dot += weight * self.session.tags.get(tag).copied().unwrap_or(0.0).max(0.0);
-        }
-        let mut profile_norm = 0.0;
-        for weight in self.session.tags.values() {
-            let positive = weight.max(0.0);
-            profile_norm += positive * positive;
-        }
-        if candidate_norm <= 0.0 || profile_norm <= 0.0 {
-            return 0.0;
-        }
-        (dot / (candidate_norm.sqrt() * profile_norm.sqrt())).clamp(0.0, 1.0)
-    }
-
-    fn artist_similarity(&self, artist: &str) -> f64 {
-        let key = artist_key(artist);
-        if key.is_empty() {
-            return 0.0;
-        }
-        let long = *self.long_term.artists.get(&key).unwrap_or(&0.0);
-        let session = *self.session.artists.get(&key).unwrap_or(&0.0);
-        let raw = (long + 0.8 * session).max(0.0);
-        raw / (raw + 3.0)
-    }
-
-    fn reason_for(&self, tags: &HashMap<String, f64>) -> String {
-        let mut matched: Vec<(&String, f64)> = tags
-            .iter()
-            .filter_map(|(tag, weight)| {
-                let effective = self.effective_tag(tag);
-                (effective.abs() > 0.2).then_some((tag, weight * effective))
-            })
-            .collect();
-        matched.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        matched
-            .into_iter()
-            .take(3)
-            .map(|(tag, score)| format!("{tag} {score:+.1}"))
-            .collect::<Vec<_>>()
-            .join(", ")
     }
 
     pub fn confidence(&self) -> f64 {
@@ -1083,15 +1063,23 @@ impl Taste {
         ));
         if let Some(last) = &self.last_pick {
             out.push_str(&format!(
-                "last pick: {} — {}  (tags {:+.2} · artist {:+.2} · session {:+.2} · total {:+.2})\n",
+                "last pick: {} — {}  (content {:+.2} · behaviour {:+.2} · context {:+.2} · total {:+.2})\n",
                 last.title,
                 last.artist,
-                last.tag_score,
-                last.artist_score,
-                last.session_score,
+                last.content,
+                last.behavior,
+                last.context,
                 last.total
             ));
         }
+        let context = recommend::current_context();
+        out.push_str(&format!(
+            "context: {} ({}h) · {} graph nodes · {} bandit arms\n",
+            context.key,
+            context.hour,
+            self.signals.cooccur.len(),
+            self.signals.arms.len()
+        ));
         out.push_str("reset with `mfe taste reset`");
         out
     }
@@ -1101,19 +1089,124 @@ impl Taste {
             return "no autoplay pick yet — play a few tracks first".to_string();
         };
         let mut out = format!(
-            "{} — {}\n  tags {:+.3} · artist {:+.3} · session {:+.3} · novelty {:+.3} → {:+.3}\n",
+            "{} — {}\n  content {:+.3} · behaviour {:+.3} · context {:+.3} · logistic {:+.3}\n\
+             bandit {:+.3} · freshness {:+.3} · novelty {:+.3} · artist {:+.3} → {:+.3}\n",
             last.title,
             last.artist,
-            last.tag_score,
-            last.artist_score,
-            last.session_score,
+            last.content,
+            last.behavior,
+            last.context,
+            last.logistic,
+            last.bandit,
+            last.freshness,
             last.novelty,
+            last.artist_score,
             last.total
         );
         if !last.reason.is_empty() {
             out.push_str(&format!("  matched: {}\n", last.reason));
         }
         out.push_str(&format!("  chosen {} (unix)\n", last.at));
+        out
+    }
+
+    /// Steer the profile the way Spotify's 2026 Taste Profile lets a listener
+    /// nudge genres: a plain `more`/`less` that writes straight into the
+    /// long-term vector instead of waiting for behaviour to catch up.
+    pub fn steer(&mut self, tag: &str, more: bool) -> String {
+        let tag = canonical_tag(tag);
+        if tag.is_empty() {
+            return "usage: mfe taste steer <more|less> <tag>".to_string();
+        }
+        let delta = if more { 3.0 } else { -3.0 };
+        *self.long_term.tags.entry(tag.clone()).or_insert(0.0) += delta;
+        self.known_tags.insert(tag.clone());
+        self.dirty = true;
+        self.updated_at = now_unix();
+        if more {
+            format!("steering towards “{tag}” (+{delta:.0})")
+        } else {
+            format!("steering away from “{tag}” ({delta:.0})")
+        }
+    }
+
+    /// The `mfe taste profile` view: what the model believes, in order, with
+    /// the context and graph layers visible instead of hidden.
+    pub fn model_summary(&self) -> String {
+        let context = recommend::current_context();
+        let mut out = self.summary();
+        out.push('\n');
+        out.push_str(&self.signals.summary());
+        let learned = self
+            .top_effective_tags(6)
+            .into_iter()
+            .map(|(tag, weight)| format!("{tag} {weight:+.1}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        if !learned.is_empty() {
+            out.push_str(&format!("logistic tags: {learned}\n"));
+        }
+        let contexts = self
+            .signals
+            .contexts
+            .iter()
+            .filter(|(key, _)| key.as_str() != context.key)
+            .count();
+        out.push_str(&format!(
+            "contexts learned: {} ({})\n",
+            contexts,
+            if context.weekend {
+                "weekend"
+            } else {
+                "weekday"
+            }
+        ));
+        out
+    }
+
+    /// Every context bucket that has learned something, newest profile first.
+    pub fn context_summary(&self) -> String {
+        let context = recommend::current_context();
+        if self.signals.contexts.is_empty() {
+            return format!(
+                "context {} ({}h)\nno context data yet — play a few tracks in different sessions\n",
+                context.key, context.hour
+            );
+        }
+        let mut rows: Vec<(&String, &Affinity)> = self.signals.contexts.iter().collect();
+        rows.sort_by(|a, b| {
+            b.1.tags
+                .values()
+                .sum::<f64>()
+                .partial_cmp(&a.1.tags.values().sum::<f64>())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut out = format!(
+            "context {} ({}h) · {} buckets learned\n",
+            context.key,
+            context.hour,
+            rows.len()
+        );
+        for (key, affinity) in rows.into_iter().take(8) {
+            let mut tags: Vec<(&String, f64)> = affinity
+                .tags
+                .iter()
+                .filter(|(_, weight)| **weight > 0.3)
+                .map(|(tag, weight)| (tag, *weight))
+                .collect();
+            tags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            let line = tags
+                .into_iter()
+                .take(4)
+                .map(|(tag, weight)| format!("{tag} {weight:.1}"))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            out.push_str(&format!(
+                "{}{key}: {}\n",
+                if key == &context.key { "→ " } else { "  " },
+                if line.is_empty() { "—" } else { &line }
+            ));
+        }
         out
     }
 
@@ -1125,6 +1218,9 @@ impl Taste {
             "probes" => {
                 self.probes = Probes::default();
             }
+            "contexts" => {
+                self.signals.contexts.clear();
+            }
             _ => {
                 self.long_term = Affinity::default();
                 self.session = Session::default();
@@ -1133,6 +1229,7 @@ impl Taste {
                 self.blocked.clear();
                 self.known_tags.clear();
                 self.last_pick = None;
+                self.signals = Signals::default();
                 // Keep the profile from being silently rebuilt from history.
                 self.seeded = true;
             }
@@ -1171,6 +1268,7 @@ impl Taste {
                 for weight in self.long_term.artists.values_mut() {
                     *weight *= factor;
                 }
+                self.signals.decay(factor);
                 self.updated_at = now;
             }
         }
@@ -1259,7 +1357,7 @@ pub fn tags_for(track: &Track) -> HashMap<String, f64> {
     out
 }
 
-fn canonical_tag(raw: &str) -> String {
+pub(crate) fn canonical_tag(raw: &str) -> String {
     let mut tag = raw
         .trim()
         .to_ascii_lowercase()
@@ -1362,7 +1460,7 @@ fn primary_tag(tags: &HashMap<String, f64>) -> Option<String> {
         .map(|(tag, _)| tag.clone())
 }
 
-fn artist_key(artist: &str) -> String {
+pub(crate) fn artist_key(artist: &str) -> String {
     artist.trim().to_ascii_lowercase()
 }
 
@@ -1522,6 +1620,23 @@ mod tests {
         }
         let weight = *taste.session.tags.get("phonk").unwrap_or(&0.0);
         assert!(weight > 1.0, "session phonk weight {weight}");
+        // The recommender layers learned from the same plays: graph links,
+        // bandit arms and the logistic model are all populated.
+        assert!(taste.signals.starts >= 3);
+        assert!(taste.signals.arms.contains_key("phonk"));
+        assert!(!taste.signals.weights.is_empty());
+    }
+
+    #[test]
+    fn slop_is_filtered_out_of_recommendations() {
+        let mut taste = profile_with(10.0);
+        let mut slop = phonk("slop");
+        slop.title = "Midnight Phonk (slowed + reverb)".to_string();
+        let picks = taste.rank(&[slop, phonk("clean")], &[], 2);
+        assert!(
+            picks.iter().all(|track| track.id != "slop"),
+            "quality filter should drop the re-upload"
+        );
     }
 
     #[test]
@@ -1534,7 +1649,16 @@ mod tests {
         // Not enough plays yet.
         assert!(taste.session.plays < 8);
         let candidates: Vec<Track> = (0..4).map(|index| phonk(&format!("p-{index}"))).collect();
-        let plan = taste.plan_batch(&candidates, &[], 4, true, 1);
+        let plan = taste.plan_batch(
+            &candidates,
+            &[],
+            PlanOptions {
+                limit: 4,
+                probe: true,
+                probe_every: 1,
+                ..Default::default()
+            },
+        );
         assert!(plan.probes.is_empty());
     }
 
@@ -1558,7 +1682,16 @@ mod tests {
             track.genre = vec!["Lofi".to_string()];
             candidates.push(track);
         }
-        let plan = taste.plan_batch(&candidates, &[], 4, true, 1);
+        let plan = taste.plan_batch(
+            &candidates,
+            &[],
+            PlanOptions {
+                limit: 4,
+                probe: true,
+                probe_every: 1,
+                ..Default::default()
+            },
+        );
         assert_eq!(plan.probes.len(), 1, "expected exactly one probe");
         let (id, tag) = plan.probes.iter().next().unwrap();
         assert_eq!(tag, "lofi");

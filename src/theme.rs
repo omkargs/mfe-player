@@ -248,6 +248,59 @@ const KANAGAWA: Theme = Theme {
     purple: Color::Rgb(149, 127, 184),
 };
 
+/// Everforest (dark, medium) — the calm green rice that took over
+/// r/unixporn after Gruvbox.
+const EVERFOREST: Theme = Theme {
+    bg: Color::Rgb(45, 53, 59),
+    panel: Color::Rgb(52, 63, 68),
+    panel2: Color::Rgb(61, 72, 77),
+    border: Color::Rgb(133, 146, 137),
+    fg: Color::Rgb(211, 198, 170),
+    dim: Color::Rgb(133, 146, 137),
+    faint: Color::Rgb(94, 106, 101),
+    accent: Color::Rgb(167, 192, 128),
+    accent2: Color::Rgb(131, 192, 146),
+    green: Color::Rgb(167, 192, 128),
+    yellow: Color::Rgb(219, 188, 127),
+    red: Color::Rgb(230, 126, 128),
+    purple: Color::Rgb(214, 153, 182),
+};
+
+/// One Dark — Atom/VS Code's palette, still the default of half the
+/// terminal screenshots on the internet.
+const ONE_DARK: Theme = Theme {
+    bg: Color::Rgb(40, 44, 52),
+    panel: Color::Rgb(33, 37, 43),
+    panel2: Color::Rgb(44, 49, 58),
+    border: Color::Rgb(62, 68, 81),
+    fg: Color::Rgb(171, 178, 191),
+    dim: Color::Rgb(130, 137, 151),
+    faint: Color::Rgb(92, 99, 112),
+    accent: Color::Rgb(97, 175, 239),
+    accent2: Color::Rgb(86, 182, 194),
+    green: Color::Rgb(152, 195, 121),
+    yellow: Color::Rgb(229, 192, 123),
+    red: Color::Rgb(224, 108, 117),
+    purple: Color::Rgb(198, 120, 221),
+};
+
+/// Catppuccin Latte — the light half of the most popular rice palette.
+const CATPPUCCIN_LATTE: Theme = Theme {
+    bg: Color::Rgb(239, 241, 245),
+    panel: Color::Rgb(230, 233, 239),
+    panel2: Color::Rgb(220, 224, 232),
+    border: Color::Rgb(156, 160, 176),
+    fg: Color::Rgb(76, 79, 105),
+    dim: Color::Rgb(108, 111, 133),
+    faint: Color::Rgb(156, 160, 176),
+    accent: Color::Rgb(234, 118, 203),
+    accent2: Color::Rgb(23, 146, 153),
+    green: Color::Rgb(64, 160, 43),
+    yellow: Color::Rgb(223, 142, 29),
+    red: Color::Rgb(210, 15, 57),
+    purple: Color::Rgb(136, 57, 239),
+};
+
 /// The terminal's own palette. Every surface is `Reset`, so it inherits
 /// whatever background and foreground the user already runs, and the accents
 /// are the 16 ANSI colours rather than fixed RGB values.
@@ -330,6 +383,9 @@ pub const THEME_NAMES: &[&str] = &[
     "ocean",
     "rose-pine",
     "kanagawa",
+    "everforest",
+    "one-dark",
+    "catppuccin-latte",
     "auto",
     "wallpaper",
 ];
@@ -350,6 +406,9 @@ fn preset(name: &str) -> Option<Theme> {
         "ocean" | "deep" | "abyss" => Some(OCEAN),
         "rose-pine" | "rosepine" | "rosé-pine" => Some(ROSE_PINE),
         "kanagawa" | "kanagawa-wave" | "ink" => Some(KANAGAWA),
+        "everforest" | "ever-forest" | "forest" => Some(EVERFOREST),
+        "one-dark" | "onedark" | "atom" => Some(ONE_DARK),
+        "catppuccin-latte" | "latte" | "catppuccin-light" => Some(CATPPUCCIN_LATTE),
         "auto" | "ansi" | "terminal-palette" => Some(AUTO),
         // "wallpaper" is resolved from the desktop, not from a fixed palette.
         _ => None,
@@ -567,6 +626,11 @@ pub fn canonical_name(name: &str) -> Option<&'static str> {
         "solarized" | "solarized-dark" | "solar" => "solarized",
         "amber" | "retro" | "terminal" => "amber",
         "ocean" | "deep" | "abyss" => "ocean",
+        "rose-pine" | "rosepine" | "rosé-pine" => "rose-pine",
+        "kanagawa" | "kanagawa-wave" | "ink" => "kanagawa",
+        "everforest" | "ever-forest" | "forest" => "everforest",
+        "one-dark" | "onedark" | "atom" => "one-dark",
+        "catppuccin-latte" | "latte" | "catppuccin-light" => "catppuccin-latte",
         "auto" | "ansi" | "terminal-palette" => "auto",
         "wallpaper" | "wall" | "desktop" => "wallpaper",
         _ => return None,

@@ -49,6 +49,6 @@ objc2-media-player = "0.3"
 block2 = "0.6"
 
 [profile.release]
-lto = true
-codegen-units = 1
+lto = "off"
+codegen-units = 16
 strip = true

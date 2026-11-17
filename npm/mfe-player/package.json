@@ -1,6 +1,6 @@
 {
   "name": "mfe-player",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "A plugin-driven terminal music player: mpv, ratatui, no subscription, no account.",
   "license": "MIT",
   "repository": {
@@ -29,12 +29,12 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "mfe-player-linux-x64": "0.3.7",
-    "mfe-player-linux-x64-musl": "0.3.7",
-    "mfe-player-linux-arm64": "0.3.7",
-    "mfe-player-darwin-x64": "0.3.7",
-    "mfe-player-darwin-arm64": "0.3.7",
-    "mfe-player-windows-x64": "0.3.7",
-    "mfe-player-windows-arm64": "0.3.7"
+    "mfe-player-linux-x64": "0.3.8",
+    "mfe-player-linux-x64-musl": "0.3.8",
+    "mfe-player-linux-arm64": "0.3.8",
+    "mfe-player-darwin-x64": "0.3.8",
+    "mfe-player-darwin-arm64": "0.3.8",
+    "mfe-player-windows-x64": "0.3.8",
+    "mfe-player-windows-arm64": "0.3.8"
   }
 }

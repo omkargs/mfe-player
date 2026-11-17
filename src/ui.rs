@@ -142,7 +142,7 @@ fn gradient_rule(width: usize) -> Line<'static> {
 }
 
 /// Horizontal scroll for text that does not fit: hold at the start, roll
-/// slowly, then hold again. No endless twitch, no lost beginnings.
+/// smoothly, then hold again. No endless twitch, no lost beginnings.
 fn marquee(text: &str, width: usize, gap: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     if chars.len() <= width || width == 0 {
@@ -151,14 +151,18 @@ fn marquee(text: &str, width: usize, gap: usize) -> String {
     if !motion() {
         return chars.iter().take(width).collect();
     }
-    const DWELL: usize = 46; // ~2.3 s at the 50 ms tick
+    const DWELL: usize = 90; // ~1.5 s dwell at the start at 60 fps
     let cycle = chars.len() + gap;
-    let period = DWELL + cycle * 2;
+    let step_delay = 5; // advance 1 char every 5 frames (~12 chars/sec, butter-smooth reading speed)
+    let scroll_duration = cycle * step_delay;
+    let period = DWELL + scroll_duration + 30; // dwell + scroll + rest
     let position = phase() % period;
     let offset = if position < DWELL {
         0
+    } else if position < DWELL + scroll_duration {
+        (position - DWELL) / step_delay % cycle
     } else {
-        (position - DWELL) / 2 % cycle
+        0
     };
     let mut out = String::with_capacity(width);
     for step in 0..width {
@@ -2998,7 +3002,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         section("AUDIO & VISUALISER"),
         key("E", "cycle EQ: flat / bass / vocal / night / loud / custom"),
         key("Ctrl+E", "edit the 10-band EQ: ←/→ band, ↑/↓ ±0.5 dB, Enter"),
-        key("Alt+F", "smart fade: 0 / 2 / 4 / 6 s at each end of a track"),
+        key("Alt+F", "smart fade: 0 / 2 / 4 / 6 / 8 / 10 / 12 s (smooth S-curve)"),
         key("Alt+R", "replaygain: off / track / album for tagged files"),
         key("Alt+N", "toggle loudness normalisation"),
         key("Ctrl+V", "toggle the cava spectrum panel"),

@@ -888,10 +888,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) ->
         } else {
             Duration::from_millis(42)
         };
+        let remaining = draw_interval.saturating_sub(last_frame.elapsed());
         let input_poll = if animating {
-            Duration::from_millis(5)
+            remaining.min(Duration::from_millis(6))
         } else {
-            Duration::from_millis(18)
+            remaining.min(Duration::from_millis(20))
         };
 
         if force_draw || last_frame.elapsed() >= draw_interval {

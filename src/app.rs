@@ -2687,7 +2687,7 @@ impl App {
 
     /// Smart fade: no dropping between songs, no guillotine after the last
     /// beat. The volume ramps down over the final `fade_seconds` and back up
-    /// over the first `fade_seconds` of what comes next.
+    /// over the first `fade_seconds` of what comes next using an acoustic S-curve.
     fn update_fade(&mut self) {
         if self.sleep_fading || self.now_playing.is_none() {
             return;
@@ -2706,12 +2706,16 @@ impl App {
         let level = if fade <= 0.05 || duration <= 1.0 {
             1.0
         } else {
+            // Adaptive fade budget: never consume more than 35% of total track duration
+            let effective_fade = fade.min(duration * 0.35);
             let position = snapshot.position.max(0.0);
-            let fade_in = (position / fade).clamp(0.0, 1.0);
-            let fade_out = ((duration - position) / fade).clamp(0.0, 1.0);
-            fade_in.min(fade_out)
+            let fade_in = (position / effective_fade).clamp(0.0, 1.0);
+            let fade_out = ((duration - position) / effective_fade).clamp(0.0, 1.0);
+            let linear = fade_in.min(fade_out);
+            // Equal-power sinusoidal S-curve for silky smooth acoustic transitions
+            0.5 * (1.0 - (linear * std::f64::consts::PI).cos())
         };
-        if (level - self.fade_level).abs() < 0.01 {
+        if (level - self.fade_level).abs() < 0.005 {
             return;
         }
         self.fade_level = level;
@@ -2742,7 +2746,7 @@ impl App {
     }
 
     fn cycle_fade(&mut self) {
-        const OPTIONS: &[f64] = &[0.0, 2.0, 4.0, 6.0];
+        const OPTIONS: &[f64] = &[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0];
         let current = OPTIONS
             .iter()
             .position(|seconds| (seconds - self.config.fade_seconds).abs() < 0.25)
@@ -2753,7 +2757,7 @@ impl App {
         self.fade_level = 1.0;
         self.update_fade();
         self.flash(if next > 0.0 {
-            format!("smart fade on — {next:>4.1}s at each end")
+            format!("smart fade on — {next:>4.1}s S-curve at each end")
         } else {
             "smart fade off".to_string()
         });
@@ -6773,15 +6777,12 @@ impl App {
     }
 
     /// True while something on screen is moving. The main loop uses this to
-    /// run at 60 fps during playback and drop to a calm 15 fps when idle.
+    /// run at 60 fps during playback and drop to a calm 24 fps when idle.
     pub fn animating(&self) -> bool {
         if self.should_quit {
             return false;
         }
         let playing = self.now_playing.is_some()
-            && self.config.motion
-            && self.cava_enabled
-            && !self.spectrum_hidden
             && !self
                 .audio
                 .as_ref()
@@ -6792,6 +6793,7 @@ impl App {
             || self.search_loading
             || self.resolving
             || self.toast.is_some()
+            || self.config.motion
     }
 
     pub fn spinner_char(&self) -> &'static str {

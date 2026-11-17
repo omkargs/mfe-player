@@ -109,13 +109,14 @@ machine:
 | Stage | What it does here |
 |---|---|
 | **Implicit feedback** | Plays, completions, likes, repeats and early skips become continuous rewards (a 92% listen beats a 51% one). |
-| **Content** | Genre/plugin tags and title tokens, scored by cosine against your long-term profile. |
-| **Behaviour** | A track/artist co-listening graph built from consecutive plays. The local stand-in for collaborative filtering. |
+| **Content** | Genre/plugin tags and title tokens (edit stopwords stripped), scored by cosine against your long-term profile. |
+| **Behaviour & Markov** | Co-listening graph and directed Markov transition model $P(B \mid A)$ recording natural sequence flow. |
+| **Energy & DJ flow** | Continuous pacing score rewards smooth acoustic transitions and penalizes jarring energy jumps. |
 | **Context** | A CoSeRNN-style time bucket (early morning → night, weekday/weekend) learns that 9am and 1am are different people. |
 | **Logistic model** | Online SGD over tag/artist/context features — the single-user shape of Logistic MF. |
-| **Bandit** | Beta-Bernoulli arms per genre with Thompson-style sampling and epsilon-greedy exploration (the BaRT idea). |
-| **Ordering** | Shuffle generates three sequences and keeps the one that spaces artists ~25% apart and pushes recent tracks back. |
-| **Quality** | Slowed/sped-up/nightcore/8D/AI-cover re-uploads are kept out of autoplay. |
+| **Bandit & Recovery** | Beta-Bernoulli arms per genre with Thompson sampling; skip streaks trigger recovery mode with familiar anchor boosts. |
+| **Ordering & Rhythm** | Anchor-first batch planning; shuffle generates three sequences and optimizes artist spacing (~25%) and freshness. |
+| **Quality screen** | Slowed/reverb/sped/nightcore/8D/AI/chopped re-uploads filtered out; edit tokens barred from taste tags. |
 
 ```bash
 mfe taste profile               # genres, arms, context, graph size
@@ -139,7 +140,7 @@ MFE is the music player your Hyprland / yabai / GlazeWM setup was missing:
 - **Transparency that actually works** — `Alt+W` hands every background cell (base, panels, popups) back to your terminal, so kitty/Ghostty/WezTerm/Windows Terminal opacity and blur show the wallpaper. Works on Linux, macOS **and** Windows.
 - **60 fps in-process visualiser** — mel-spaced bands, asymmetric spring attack/release, peak hold, beat pulse and 1/8-cell block bars. `cava` only captures (PipeWire/PulseAudio, CoreAudio incl. the macOS 14.2+ output tap, WASAPI), so the spectrum finally moves with the frame rate instead of the poll timer.
 - **Hide it when you want wallpaper only** — `Alt+S` removes the spectrum panel from the layout with no empty gutter. cava keeps running, so borders and gradients still pulse with the kick.
-- **A palette for every rice** — `catppuccin` (+ `catppuccin-latte`), `everforest`, `one-dark`, `tokyo-night`, `gruvbox`, `nord`, `dracula`, `kanagawa`, `rose-pine`, and `wallpaper`, which samples the image your compositor is actually showing. `Alt+T` cycles.
+- **A palette for every rice** — `synthwave`, `cyberpunk`, `oxocarbon`, `ayu-dark`, `monokai`, `midnight`, `catppuccin` (+ `catppuccin-latte`), `everforest`, `one-dark`, `tokyo-night`, `gruvbox`, `nord`, `dracula`, `kanagawa`, `rose-pine`, and `wallpaper`, which samples the image your compositor is actually showing. `Alt+T` cycles.
 - **Mini spectrum in your bar** — `mfe status --json` now carries `spectrum`, `pulse` and `energy`; [`contrib/mfe-spectrum.sh`](contrib/mfe-spectrum.sh) renders it as `▁▂▃▄▅▆▇█` for waybar, sketchybar, polybar or YASB without spawning a second cava.
 - **Recipes per desktop** — [docs/RICING.md](docs/RICING.md) has copy-paste configs for Hyprland + waybar, macOS + sketchybar, and the Windows stack (GlazeWM/Komorebi + YASB + Rainmeter + Windows Terminal).
 

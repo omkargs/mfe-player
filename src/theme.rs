@@ -301,6 +301,108 @@ const CATPPUCCIN_LATTE: Theme = Theme {
     purple: Color::Rgb(136, 57, 239),
 };
 
+/// Synthwave '84 — 80s outrun neon, glowing magenta and electric cyan.
+const SYNTHWAVE: Theme = Theme {
+    bg: Color::Rgb(22, 19, 32),
+    panel: Color::Rgb(26, 22, 40),
+    panel2: Color::Rgb(34, 29, 54),
+    border: Color::Rgb(88, 62, 128),
+    fg: Color::Rgb(248, 248, 242),
+    dim: Color::Rgb(140, 110, 185),
+    faint: Color::Rgb(85, 70, 120),
+    accent: Color::Rgb(255, 65, 180),
+    accent2: Color::Rgb(0, 240, 255),
+    green: Color::Rgb(114, 241, 184),
+    yellow: Color::Rgb(254, 222, 93),
+    red: Color::Rgb(254, 68, 80),
+    purple: Color::Rgb(190, 80, 255),
+};
+
+/// Cyberpunk 2077 — bold caution yellow, neon cyan, high-contrast dark slate.
+const CYBERPUNK: Theme = Theme {
+    bg: Color::Rgb(10, 10, 18),
+    panel: Color::Rgb(18, 19, 30),
+    panel2: Color::Rgb(26, 27, 44),
+    border: Color::Rgb(48, 56, 88),
+    fg: Color::Rgb(238, 245, 255),
+    dim: Color::Rgb(128, 140, 175),
+    faint: Color::Rgb(70, 78, 108),
+    accent: Color::Rgb(249, 230, 63),
+    accent2: Color::Rgb(0, 230, 254),
+    green: Color::Rgb(0, 255, 159),
+    yellow: Color::Rgb(255, 225, 53),
+    red: Color::Rgb(255, 0, 85),
+    purple: Color::Rgb(176, 38, 255),
+};
+
+/// Oxocarbon — minimalist IBM Carbon design with pink & cyan accents.
+const OXOCARBON: Theme = Theme {
+    bg: Color::Rgb(22, 22, 22),
+    panel: Color::Rgb(28, 28, 28),
+    panel2: Color::Rgb(38, 38, 38),
+    border: Color::Rgb(60, 60, 60),
+    fg: Color::Rgb(244, 244, 244),
+    dim: Color::Rgb(166, 166, 166),
+    faint: Color::Rgb(82, 82, 82),
+    accent: Color::Rgb(255, 126, 182),
+    accent2: Color::Rgb(66, 190, 255),
+    green: Color::Rgb(66, 190, 101),
+    yellow: Color::Rgb(255, 215, 0),
+    red: Color::Rgb(238, 83, 150),
+    purple: Color::Rgb(190, 149, 255),
+};
+
+/// Ayu Dark — warm golden amber, crisp cyan, muted slate background.
+const AYU_DARK: Theme = Theme {
+    bg: Color::Rgb(15, 20, 25),
+    panel: Color::Rgb(20, 27, 34),
+    panel2: Color::Rgb(28, 36, 46),
+    border: Color::Rgb(46, 59, 74),
+    fg: Color::Rgb(230, 225, 207),
+    dim: Color::Rgb(122, 134, 150),
+    faint: Color::Rgb(77, 89, 105),
+    accent: Color::Rgb(255, 180, 84),
+    accent2: Color::Rgb(57, 186, 230),
+    green: Color::Rgb(170, 217, 76),
+    yellow: Color::Rgb(231, 197, 71),
+    red: Color::Rgb(240, 113, 120),
+    purple: Color::Rgb(210, 166, 255),
+};
+
+/// Monokai — vibrant classic code editor palette.
+const MONOKAI: Theme = Theme {
+    bg: Color::Rgb(39, 40, 34),
+    panel: Color::Rgb(33, 34, 29),
+    panel2: Color::Rgb(49, 50, 43),
+    border: Color::Rgb(85, 87, 76),
+    fg: Color::Rgb(248, 248, 242),
+    dim: Color::Rgb(142, 144, 133),
+    faint: Color::Rgb(90, 92, 82),
+    accent: Color::Rgb(249, 38, 114),
+    accent2: Color::Rgb(102, 217, 239),
+    green: Color::Rgb(166, 226, 46),
+    yellow: Color::Rgb(230, 219, 116),
+    red: Color::Rgb(249, 38, 114),
+    purple: Color::Rgb(174, 129, 255),
+};
+
+/// Midnight OLED — pitch black canvas for pure OLED contrast with neon accents.
+const MIDNIGHT: Theme = Theme {
+    bg: Color::Rgb(0, 0, 0),
+    panel: Color::Rgb(8, 8, 10),
+    panel2: Color::Rgb(16, 16, 20),
+    border: Color::Rgb(40, 42, 50),
+    fg: Color::Rgb(240, 240, 245),
+    dim: Color::Rgb(130, 132, 145),
+    faint: Color::Rgb(65, 68, 80),
+    accent: Color::Rgb(120, 140, 255),
+    accent2: Color::Rgb(80, 220, 255),
+    green: Color::Rgb(100, 240, 150),
+    yellow: Color::Rgb(250, 220, 90),
+    red: Color::Rgb(255, 90, 110),
+    purple: Color::Rgb(190, 110, 255),
+};
+
 /// The terminal's own palette. Every surface is `Reset`, so it inherits
 /// whatever background and foreground the user already runs, and the accents
 /// are the 16 ANSI colours rather than fixed RGB values.
@@ -386,6 +488,12 @@ pub const THEME_NAMES: &[&str] = &[
     "everforest",
     "one-dark",
     "catppuccin-latte",
+    "synthwave",
+    "cyberpunk",
+    "oxocarbon",
+    "ayu-dark",
+    "monokai",
+    "midnight",
     "auto",
     "wallpaper",
 ];
@@ -409,6 +517,12 @@ fn preset(name: &str) -> Option<Theme> {
         "everforest" | "ever-forest" | "forest" => Some(EVERFOREST),
         "one-dark" | "onedark" | "atom" => Some(ONE_DARK),
         "catppuccin-latte" | "latte" | "catppuccin-light" => Some(CATPPUCCIN_LATTE),
+        "synthwave" | "synthwave-84" | "synth" | "neon" | "outrun" => Some(SYNTHWAVE),
+        "cyberpunk" | "cyber" | "night-city" => Some(CYBERPUNK),
+        "oxocarbon" | "oxo" | "carbon" => Some(OXOCARBON),
+        "ayu-dark" | "ayu" | "ayu-mirage" => Some(AYU_DARK),
+        "monokai" | "monokai-pro" => Some(MONOKAI),
+        "midnight" | "oled" | "pitch-black" | "pure-black" => Some(MIDNIGHT),
         "auto" | "ansi" | "terminal-palette" => Some(AUTO),
         // "wallpaper" is resolved from the desktop, not from a fixed palette.
         _ => None,
@@ -631,6 +745,12 @@ pub fn canonical_name(name: &str) -> Option<&'static str> {
         "everforest" | "ever-forest" | "forest" => "everforest",
         "one-dark" | "onedark" | "atom" => "one-dark",
         "catppuccin-latte" | "latte" | "catppuccin-light" => "catppuccin-latte",
+        "synthwave" | "synthwave-84" | "synth" | "neon" | "outrun" => "synthwave",
+        "cyberpunk" | "cyber" | "night-city" => "cyberpunk",
+        "oxocarbon" | "oxo" | "carbon" => "oxocarbon",
+        "ayu-dark" | "ayu" | "ayu-mirage" => "ayu-dark",
+        "monokai" | "monokai-pro" => "monokai",
+        "midnight" | "oled" | "pitch-black" | "pure-black" => "midnight",
         "auto" | "ansi" | "terminal-palette" => "auto",
         "wallpaper" | "wall" | "desktop" => "wallpaper",
         _ => return None,

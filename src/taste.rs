@@ -209,6 +209,10 @@ pub struct LastPick {
     #[serde(default)]
     pub freshness: f64,
     #[serde(default)]
+    pub pacing: f64,
+    #[serde(default)]
+    pub transition: f64,
+    #[serde(default)]
     pub reason: String,
     #[serde(default)]
     pub probe: bool,
@@ -815,6 +819,8 @@ impl Taste {
                 logistic: top.parts.logistic,
                 bandit: top.parts.bandit,
                 freshness: top.parts.freshness,
+                pacing: top.parts.pacing,
+                transition: top.parts.transition,
                 reason: top.parts.reason.clone(),
                 probe: false,
                 at: now,
@@ -832,15 +838,39 @@ impl Taste {
         options: PlanOptions,
     ) -> BatchPlan {
         let limit = options.limit.max(1);
+        let in_recovery = self.signals.consecutive_skips >= 2;
+        let explore = if in_recovery { 0.0 } else { options.explore };
         let mut picked =
-            self.rank_candidates(candidates, recent, limit, options.filter, options.explore);
+            self.rank_candidates(candidates, recent, limit, options.filter, explore);
         let mut probes = HashMap::new();
         if picked.is_empty() {
             return BatchPlan::default();
         }
 
+        // Anchor vs discovery rhythm:
+        // Establish familiar anchors at slot 0 (and slot 3 for batches of 5+)
+        // so discovery tracks don't monopolize consecutive picks.
+        if !in_recovery && picked.len() >= 3 {
+            let is_anchor = |c: &Candidate| {
+                c.parts.content >= 0.38 || c.parts.artist >= 0.30 || c.parts.behavior >= 0.30
+            };
+            if !is_anchor(&picked[0]) {
+                if let Some(pos) = picked.iter().position(is_anchor) {
+                    let anchor = picked.remove(pos);
+                    picked.insert(0, anchor);
+                }
+            }
+            if picked.len() >= 5 && !is_anchor(&picked[3]) {
+                if let Some(pos) = picked.iter().skip(4).position(is_anchor) {
+                    let anchor = picked.remove(pos + 4);
+                    picked.insert(3, anchor);
+                }
+            }
+        }
+
         let every = options.probe_every.max(1);
         if options.probe
+            && !in_recovery
             && self.session.plays >= 8
             && self.session.since_probe >= every
             && self.confidence() >= 0.55
@@ -1090,7 +1120,7 @@ impl Taste {
         };
         let mut out = format!(
             "{} — {}\n  content {:+.3} · behaviour {:+.3} · context {:+.3} · logistic {:+.3}\n\
-             bandit {:+.3} · freshness {:+.3} · novelty {:+.3} · artist {:+.3} → {:+.3}\n",
+             bandit {:+.3} · pacing {:+.3} · transition {:+.3} · freshness {:+.3} · novelty {:+.3} · artist {:+.3} → {:+.3}\n",
             last.title,
             last.artist,
             last.content,
@@ -1098,6 +1128,8 @@ impl Taste {
             last.context,
             last.logistic,
             last.bandit,
+            last.pacing,
+            last.transition,
             last.freshness,
             last.novelty,
             last.artist_score,
@@ -1443,6 +1475,24 @@ fn tokenize(raw: &str) -> Vec<String> {
         "free",
         "download",
         "original",
+        "slowed",
+        "reverb",
+        "reverbed",
+        "sped",
+        "speed",
+        "nightcore",
+        "daycore",
+        "boosted",
+        "bassboost",
+        "bassboosted",
+        "chopped",
+        "screwed",
+        "remake",
+        "reupload",
+        "8d",
+        "pitch",
+        "pitched",
+        "acapella",
     ];
     raw.to_ascii_lowercase()
         .split(|ch: char| !ch.is_alphanumeric())
@@ -1715,5 +1765,29 @@ mod tests {
         candidates.push(phonk("ok"));
         let picks = taste.rank(&candidates, &[], 1);
         assert_eq!(picks[0].id, "ok");
+    }
+
+    #[test]
+    fn edit_stopwords_do_not_become_taste_tags() {
+        let tokens = tokenize("Midnight Phonk slowed reverb sped nightcore boosted daycore 8d chopped");
+        assert!(tokens.contains(&"midnight".to_string()));
+        assert!(tokens.contains(&"phonk".to_string()));
+        assert!(!tokens.contains(&"slowed".to_string()));
+        assert!(!tokens.contains(&"reverb".to_string()));
+        assert!(!tokens.contains(&"sped".to_string()));
+        assert!(!tokens.contains(&"nightcore".to_string()));
+        assert!(!tokens.contains(&"boosted".to_string()));
+        assert!(!tokens.contains(&"daycore".to_string()));
+        assert!(!tokens.contains(&"8d".to_string()));
+    }
+
+    #[test]
+    fn plan_batch_maintains_anchor_at_front() {
+        let mut taste = profile_with(8.0);
+        // phonk tracks are strong anchors because long-term phonk weight is 8.0
+        let candidates: Vec<Track> = (0..5).map(|i| phonk(&format!("p-{i}"))).collect();
+        let plan = taste.plan_batch(&candidates, &[], PlanOptions { limit: 5, ..Default::default() });
+        assert_eq!(plan.tracks.len(), 5);
+        assert_eq!(plan.tracks[0].genre, vec!["Drift Phonk".to_string()]);
     }
 }

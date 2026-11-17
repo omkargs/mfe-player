@@ -21,13 +21,13 @@ solves a different problem:
 |---|---|---|
 | **Implicit feedback** | streams, saves, playlist adds, completion, early skips | plays, completions, likes, repeats, skips, quick skips, dislikes |
 | **Latent model** | Logistic Matrix Factorization (Johnson, Spotify 2014); ANN retrieval (Annoy, later Voyager/HNSW) | online logistic model over tag/artist/context features; exact cosine search (the catalogue is already in memory) |
-| **Content — text** | NLP over web pages, lyrics and cultural chatter | metadata genres, plugin tags, title/album tokens |
-| **Content — audio** | Echo Nest features, CNNs on spectrograms | *not available* — no audio decoding pipeline in the player |
-| **Relational** | playlist/user/song graph embeddings (node2vec) | co-listening graph from consecutive plays, track and artist level |
+| **Content — text** | NLP over web pages, lyrics and cultural chatter | metadata genres, plugin tags, title/album tokens (edit stopwords stripped) |
+| **Content — audio** | Echo Nest features, CNNs on spectrograms | tag energy heuristic: tempo/energy pacing & DJ flow continuity |
+| **Relational** | playlist/user/song graph embeddings (node2vec) | co-listening graph + directed Markov transition model $P(B \mid A)$ |
 | **Context** | CoSeRNN session embeddings: day, hour, device | time-of-day bucket + weekday/weekend, fused with the session profile |
-| **Ranking** | BaRT contextual bandits, epsilon-greedy / Thompson / UCB, RL rankers | Beta-Bernoulli arms per genre with Thompson-style sampling + epsilon-greedy exploration, then a weighted blend |
-| **Ordering** | generate several shuffle sequences, score freshness and artist spacing (20–30% of playlist length) | three sampled sequences scored for freshness, artist spacing and genre runs |
-| **Quality** | 2026 slop/spam exclusion, AI-persona badges | title/artist screen for slowed/sped-up/nightcore/8D/AI-cover/loop re-uploads |
+| **Ranking** | BaRT contextual bandits, epsilon-greedy / Thompson / UCB, RL rankers | Beta-Bernoulli arms per genre with Thompson sampling + epsilon-greedy exploration, skip-streak recovery mode, and weighted blend |
+| **Ordering** | generate several shuffle sequences, score freshness and artist spacing (20–30% of playlist length) | three sampled sequences scored for freshness, artist spacing and genre runs; anchor-first batch rhythm |
+| **Quality** | 2026 slop/spam exclusion, AI-persona badges | title/artist screen for slowed/reverb/sped/nightcore/8D/AI-cover/loop/chopped re-uploads |
 
 The important design choice is that the layers stay separate. A skipped genre
 moves a session veto and a bandit arm; a finished track moves the logistic
@@ -75,19 +75,27 @@ This is where MFE is *not* Spotify: there is no audio CNN and no web NLP. The
 tags come from metadata, not from listening to the waveform or reading the
 internet.
 
-### 4. Behavioural score (the co-listening graph)
+### 4. Behavioural score & Markov transitions
 
-Every consecutive pair of plays adds an edge, track→track and artist→artist.
-Finishing a track strengthens the edge; skipping it still creates a weak one.
-Recommendations then score higher when the listener recently played the track,
-or an artist linked to it.
+Every consecutive pair of plays adds an undirected co-listening edge, track→track
+and artist→artist, as well as a directed Markov transition edge $P(B \mid A)$.
+Finishing track $B$ after $A$ strengthens the transition probability. Recommendations
+score higher when the candidate naturally follows the preceding track or artist in
+the listener's history.
 
-This is the local substitute for collaborative filtering. On a shared service
-the graph comes from millions of users and playlists; here it comes from this
-machine's own history. It is smaller, but it is first-party data and it never
-leaves the disk.
+This is the local substitute for collaborative filtering and sequence prediction.
+On a shared service the graph comes from millions of users; here it comes from
+this machine's own verified listening paths.
 
-### 5. Logistic model
+### 5. Energy pacing & DJ flow
+
+Transitions between tracks evaluate relative acoustic energy estimated from genre and
+acoustic metadata tags (`track_energy`). Smooth transitions ($\Delta \le 0.35$)
+receive a positive pacing bonus ($+0.06$). Jarring leaps ($\Delta > 0.70$) receive a
+penalty (up to $-0.15$), preventing sudden harsh disruptions (such as jumping
+from ambient directly into thrash metal or hardstyle).
+
+### 6. Logistic model
 
 `Signals.weights` is a first-order logistic model trained online with SGD:
 
@@ -100,7 +108,7 @@ features) collapsed to one user and hashed metadata features — the honest
 single-user version. Confidence comes from the reward, so repeated
 completions move a weight faster than one play.
 
-### 6. Context
+### 7. Context
 
 At the start of playback MFE reads the local hour and weekday, then buckets it
 the way CoSeRNN does: early morning, morning, afternoon, evening, late evening,
@@ -111,7 +119,7 @@ Unix gets the real local hour; Windows falls back to UTC unless
 `MFE_CONTEXT_HOUR` is set. The context is a soft re-weight, never a hard
 filter.
 
-### 7. Bandit rerank
+### 8. Bandit rerank & Skip-streak recovery mode
 
 Each genre is a Beta-Bernoulli arm. A reward increments `alpha`, a non-reward
 increments `beta`. Ranking samples a normal approximation of the Beta
@@ -121,23 +129,31 @@ adds the epsilon-greedy share: a small chance to favour an under-explored arm,
 which is the mechanism BaRT uses to keep buying information instead of always
 exploiting.
 
-### 8. Blend and diversity
+**Skip-Streak Recovery Mode:** If the listener skips 2 or more tracks consecutively
+(`consecutive_skips >= 2`), the algorithm detects listener fatigue. Exploration
+is immediately dampened to 0.0, and a **+0.28 anchor bonus** is awarded to
+high-affinity core tracks (while penalizing unfamiliar tracks) to quickly stabilize
+the session before resuming discovery.
 
-The final score is:
+### 9. Blend, anchor rhythm, and MMR diversity
+
+The candidate score is calculated as:
 
 ```
-0.24 content + 0.16 logistic + 0.15 behaviour + 0.13 context
-+ 0.10 artist affinity + 0.07 novelty + 0.05 bandit + 0.10 freshness
+0.22 content + 0.15 logistic + 0.13 behaviour + 0.12 context
++ 0.09 artist affinity + 0.08 transition + 0.06 novelty + 0.05 bandit + 0.10 freshness
++ pacing + anchor_bonus
 - 1.2 × session veto
 ```
 
-The batch is then picked greedily with max-marginal-relevance diversity: a
-track loses value if it is very similar to something already chosen, an artist
-is less likely to appear twice, and one tag cannot fill the whole batch.
-Session vetoes (-2.0 or lower after repeated skips) stay decisive for the rest
-of the evening.
+The batch is planned with an **anchor-vs-discovery rhythm**: slot 0 (and slot 3 for
+batches of 5+) guarantees familiar anchor tracks so discovery probes do not
+monopolize sequential listening. The rest is picked with max-marginal-relevance (MMR)
+diversity: a track loses value if it is too similar to something already chosen,
+an artist is penalized if repeated closely, and session vetoes (-2.0 after repeated skips)
+remain decisive.
 
-### 9. Scored shuffle
+### 10. Scored shuffle
 
 `shuffle` is not `rand()`. Enabling shuffle (or pressing `s`) rescores the
 upcoming queue:
@@ -151,12 +167,17 @@ Three random sequences are generated and the best-scoring one wins. During
 playback, `next` samples four remaining tracks and keeps the one that fits the
 last few plays, so the queue order stays stable for `J`/`K` editing.
 
-### 10. Quality screen
+### 11. Quality screen & Edit token exclusion
 
 `taste_filter = true` drops titles that are re-upload slop before they can be
-ranked: slowed/reverb, sped-up, nightcore, 8D, bass-boosted, 1/10-hour loops,
-AI covers and generated uploads. The track stays searchable and playable by
-hand; it just does not get recommended.
+ranked: slowed/reverb variations (`slowed & reverb`, `slowed - reverb`, `slowed down`),
+sped-up, nightcore, daycore, 8D, bass-boosted, chopped & screwed, 1/10-hour loops,
+AI covers and synthesized uploads.
+
+Furthermore, tokenization strips edit buzzwords (`slowed`, `reverb`, `sped`,
+`nightcore`, `daycore`, `boosted`, etc.) so secondary re-upload tags never pollute
+the listener's taste profile. The original tracks stay searchable and playable by
+hand; slop variations simply do not get recommended.
 
 ---
 

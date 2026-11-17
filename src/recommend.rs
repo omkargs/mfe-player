@@ -146,23 +146,43 @@ fn local_weekend() -> bool {
 /// nightcore, 8D edits, generated "AI covers"). Genuine remixes are untouched.
 pub fn low_quality_reason(track: &Track) -> Option<&'static str> {
     let haystack = format!("{} {} {}", track.title, track.artist, track.album).to_lowercase();
+    if haystack.contains("slowed") && (haystack.contains("reverb") || haystack.contains("reverbed")) {
+        return Some("slowed/reverb re-upload");
+    }
     const PATTERNS: &[(&str, &str)] = &[
-        ("slowed + reverb", "slowed/reverb re-upload"),
-        ("slowed and reverb", "slowed/reverb re-upload"),
-        ("slowed reverb", "slowed/reverb re-upload"),
+        ("slowed down", "slowed/reverb re-upload"),
+        ("slowed edit", "slowed/reverb re-upload"),
         ("slowed version", "slowed/reverb re-upload"),
+        ("slowed remix", "slowed/reverb re-upload"),
         ("sped up", "sped-up re-upload"),
         ("speed up", "sped-up re-upload"),
+        ("sped-up", "sped-up re-upload"),
+        ("speed-up", "sped-up re-upload"),
+        ("spedup", "sped-up re-upload"),
         ("nightcore", "nightcore edit"),
+        ("daycore", "nightcore/daycore edit"),
         ("8d audio", "8D edit"),
         ("8d version", "8D edit"),
+        ("8d edit", "8D edit"),
+        ("8d sound", "8D edit"),
+        ("8d music", "8D edit"),
+        ("chopped and screwed", "chopped & screwed re-upload"),
+        ("chopped & screwed", "chopped & screwed re-upload"),
+        ("chopped + screwed", "chopped & screwed re-upload"),
         ("bass boosted", "bass-boosted re-upload"),
+        ("bassboosted", "bass-boosted re-upload"),
+        ("bass boost", "bass-boosted re-upload"),
+        ("bass-boosted", "bass-boosted re-upload"),
         ("1 hour loop", "loop"),
         ("one hour loop", "loop"),
         ("10 hours", "loop"),
+        ("10 hour loop", "loop"),
+        ("hour loop", "loop"),
         ("ai cover", "AI-generated upload"),
         ("ai-generated", "AI-generated upload"),
         ("ai generated", "AI-generated upload"),
+        ("ai vocal", "AI-generated upload"),
+        ("ai vocals", "AI-generated upload"),
         ("made with suno", "AI-generated upload"),
         ("suno ai", "AI-generated upload"),
         ("udio ai", "AI-generated upload"),
@@ -171,6 +191,50 @@ pub fn low_quality_reason(track: &Track) -> Option<&'static str> {
         .iter()
         .find(|(needle, _)| haystack.contains(needle))
         .map(|(_, reason)| *reason)
+}
+
+/// Continuous energy score in [0.0, 1.0].
+/// High energy ~ 1.0 (metal, rock, drum-and-bass, techno, edm, punk, hyperpop, etc.)
+/// Low energy ~ 0.0 (ambient, lofi, chill, acoustic, folk, classical, sleep, etc.)
+/// Neutral unclassified = 0.5.
+pub fn track_energy(tags: &HashMap<String, f64>) -> f64 {
+    if tags.is_empty() {
+        return 0.5;
+    }
+    const HIGH_ENERGY: &[&str] = &[
+        "metal", "rock", "punk", "hardcore", "electronic", "techno", "edm", "dance",
+        "drum-and-bass", "dnb", "breakbeat", "dubstep", "hyperpop", "trap", "drill",
+        "phonk", "hip-hop", "rap", "industrial", "house", "pop", "club",
+    ];
+    const LOW_ENERGY: &[&str] = &[
+        "ambient", "lofi", "chill", "chillout", "acoustic", "folk", "classical",
+        "piano", "sleep", "meditation", "drone", "downtempo", "jazz", "soul",
+        "blues", "ballad", "quiet", "singer-songwriter",
+    ];
+    let mut high_sum = 0.0;
+    let mut low_sum = 0.0;
+    for (tag, weight) in tags {
+        let tag_lower = tag.to_lowercase();
+        for &high in HIGH_ENERGY {
+            if tag_lower.contains(high) {
+                high_sum += weight;
+                break;
+            }
+        }
+        for &low in LOW_ENERGY {
+            if tag_lower.contains(low) {
+                low_sum += weight;
+                break;
+            }
+        }
+    }
+    if high_sum == 0.0 && low_sum == 0.0 {
+        return 0.5;
+    }
+    let diff = high_sum - low_sum;
+    let total = high_sum + low_sum;
+    let norm = diff / total;
+    ((norm + 1.0) / 2.0).clamp(0.0, 1.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +367,12 @@ pub struct Signals {
     /// second quick skip. Shorter than the 30-day dislike block.
     #[serde(default)]
     pub skipped: HashMap<String, u64>,
+    /// Track → track directed transition weights P(B|A).
+    #[serde(default)]
+    pub transitions: HashMap<String, HashMap<String, f64>>,
+    /// Consecutive quick skips in the current session (fatigue / recovery indicator).
+    #[serde(default)]
+    pub consecutive_skips: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -410,10 +480,20 @@ impl Signals {
                         0.6 + reward,
                     );
                 }
+                if reward > 0.25 {
+                    add_edge(&mut self.transitions, &previous, outcome.id, 0.5 + reward);
+                }
             }
         }
 
-        // 5) A second quick skip keeps a track out of autoplay for a while,
+        // 5) Track consecutive skips for fatigue / recovery mode.
+        if reward <= 0.25 {
+            self.consecutive_skips = self.consecutive_skips.saturating_add(1);
+        } else if reward >= 0.70 {
+            self.consecutive_skips = 0;
+        }
+
+        // 6) A second quick skip keeps a track out of autoplay for a while,
         // without permanently blacklisting it like a dislike does.
         if reward <= 0.05 && outcome.tags.values().any(|weight| *weight > 0.9) {
             let until = now_unix().saturating_add(7 * 24 * 60 * 60);
@@ -513,6 +593,22 @@ impl Signals {
         self.contexts.get(&context.key)
     }
 
+    /// Directed Markov transition probability P(to | from).
+    pub fn markov_transition(&self, from: &str, to: &str) -> f64 {
+        if from.is_empty() || to.is_empty() {
+            return 0.0;
+        }
+        if let Some(targets) = self.transitions.get(from) {
+            if let Some(&weight) = targets.get(to) {
+                let total: f64 = targets.values().sum();
+                if total > 0.0 {
+                    return (weight / total).clamp(0.0, 1.0);
+                }
+            }
+        }
+        0.0
+    }
+
     pub fn decay(&mut self, long_term_factor: f64) {
         let factor = long_term_factor.sqrt().max(0.5);
         for edges in self.cooccur.values_mut() {
@@ -529,6 +625,13 @@ impl Signals {
             edges.retain(|_, weight| *weight > 0.02);
         }
         self.artist_graph.retain(|_, edges| !edges.is_empty());
+        for edges in self.transitions.values_mut() {
+            for weight in edges.values_mut() {
+                *weight *= factor;
+            }
+            edges.retain(|_, weight| *weight > 0.02);
+        }
+        self.transitions.retain(|_, edges| !edges.is_empty());
         for context in self.contexts.values_mut() {
             for weight in context.tags.values_mut() {
                 *weight *= long_term_factor;
@@ -555,6 +658,20 @@ impl Signals {
         }
         for edges in self.artist_graph.values_mut() {
             trim_edges(edges, 32);
+        }
+        for edges in self.transitions.values_mut() {
+            trim_edges(edges, 32);
+        }
+        if self.transitions.len() > 3000 {
+            let mut nodes: Vec<(String, f64)> = self
+                .transitions
+                .iter()
+                .map(|(id, edges)| (id.clone(), edges.values().sum::<f64>()))
+                .collect();
+            nodes.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            for (id, _) in nodes.into_iter().take(self.transitions.len() - 3000) {
+                self.transitions.remove(&id);
+            }
         }
         if self.cooccur.len() > 3000 {
             let mut nodes: Vec<(String, f64)> = self
@@ -699,6 +816,8 @@ pub struct Breakdown {
     pub bandit: f64,
     pub freshness: f64,
     pub novelty: f64,
+    pub pacing: f64,
+    pub transition: f64,
     pub total: f64,
     pub primary_tag: String,
     pub reason: String,
@@ -731,9 +850,13 @@ pub fn score(
         .signals
         .logistic(tags, &track.artist, profile.context);
     let primary = primary_tag(tags).unwrap_or_default();
+
+    let in_recovery = profile.signals.consecutive_skips >= 2;
+    let effective_explore = if in_recovery { 0.0 } else { profile.explore };
+
     let mut bandit = profile.signals.thompson(&primary, rng);
     // Epsilon-greedy: give under-explored arms a chance to prove themselves.
-    let explore_bonus = if rng.next_f64() < profile.explore {
+    let explore_bonus = if rng.next_f64() < effective_explore {
         let trials = profile
             .signals
             .arms
@@ -749,6 +872,51 @@ pub fn score(
         0.0
     };
     bandit = (bandit + explore_bonus).clamp(0.0, 1.0);
+
+    // Energy pacing & DJ flow continuity:
+    let cand_energy = track_energy(tags);
+    let prev_track = profile.recent.first();
+    let prev_energy = prev_track
+        .map(|t| track_energy(&tags_for(t)))
+        .or_else(|| {
+            profile.signals.last_track.as_ref().map(|l| {
+                let m: HashMap<String, f64> = l.tags.iter().map(|t| (t.clone(), 1.0)).collect();
+                track_energy(&m)
+            })
+        });
+    let pacing = if let Some(prev_e) = prev_energy {
+        let diff = (prev_e - cand_energy).abs();
+        if diff > 0.70 {
+            -0.15 * ((diff - 0.70) / 0.30)
+        } else if diff <= 0.35 {
+            0.06 * (1.0 - diff / 0.35)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    // Directed Markov transition probability P(candidate | previous):
+    let prev_id = prev_track
+        .map(|t| t.id.as_str())
+        .or_else(|| profile.signals.last_track.as_ref().map(|l| l.id.as_str()));
+    let transition = prev_id
+        .map(|id| profile.signals.markov_transition(id, &track.id))
+        .unwrap_or(0.0);
+
+    // Skip-streak fatigue recovery anchor boost:
+    let anchor_bonus = if in_recovery {
+        if content >= 0.50 || artist >= 0.40 {
+            0.28
+        } else if content < 0.25 && artist < 0.15 {
+            -0.20
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
 
     let freshness = freshness(profile.played_at.get(&track.id).copied(), now);
     let same_vibe = profile.last_primary.is_some_and(|last| last == primary);
@@ -777,17 +945,27 @@ pub fn score(
         .map(|(_, weight)| *weight)
         .sum();
 
-    let total = 0.24 * content
-        + 0.16 * logistic
-        + 0.15 * behavior
-        + 0.13 * context
-        + 0.10 * artist
-        + 0.07 * novelty
+    let total = 0.22 * content
+        + 0.15 * logistic
+        + 0.13 * behavior
+        + 0.12 * context
+        + 0.09 * artist
+        + 0.08 * transition
+        + 0.06 * novelty
         + 0.05 * bandit
         + 0.10 * freshness
+        + pacing
+        + anchor_bonus
         - 1.2 * veto;
 
     let mut reason = reason_for(profile, tags);
+    if in_recovery && anchor_bonus > 0.0 {
+        reason = if reason.is_empty() {
+            "recovery anchor".to_string()
+        } else {
+            format!("recovery anchor · {reason}")
+        };
+    }
     if veto > 0.5 {
         reason = if reason.is_empty() {
             format!("session veto ({veto:.1})")
@@ -808,6 +986,8 @@ pub fn score(
         bandit,
         freshness,
         novelty,
+        pacing,
+        transition,
         total,
         primary_tag: primary,
         reason,
@@ -1329,5 +1509,157 @@ mod tests {
         let half = reward_for(EventKind::Half, 0.5).unwrap();
         assert!((half - 0.51).abs() < 1e-9, "half reward {half}");
         assert!(reward_for(EventKind::SoftSkip, 0.9).unwrap() < 0.3);
+    }
+
+    #[test]
+    fn directed_markov_transitions_record_natural_flow() {
+        let mut signals = Signals::default();
+        let first = track("t1", "Intro", "Artist", "ambient");
+        let second = track("t2", "Outro", "Artist", "ambient");
+        signals.observe_start(&first, &tags("ambient"));
+        signals.observe_start(&second, &tags("ambient"));
+
+        let context = context_for(14, false);
+        signals.observe_outcome(Outcome {
+            id: "t2",
+            artist: "Artist",
+            tags: &tags("ambient"),
+            reward: 1.0,
+            context: &context,
+        });
+
+        let prob = signals.markov_transition("t1", "t2");
+        assert!(prob > 0.0, "markov transition probability must be > 0");
+        assert_eq!(signals.markov_transition("t2", "t1"), 0.0);
+    }
+
+    #[test]
+    fn skip_streak_triggers_recovery_mode() {
+        let mut signals = Signals::default();
+        let context = context_for(12, false);
+        assert_eq!(signals.consecutive_skips, 0);
+
+        // First quick skip
+        signals.observe_outcome(Outcome {
+            id: "s1",
+            artist: "A",
+            tags: &tags("pop"),
+            reward: 0.0,
+            context: &context,
+        });
+        assert_eq!(signals.consecutive_skips, 1);
+
+        // Second quick skip enters recovery mode
+        signals.observe_outcome(Outcome {
+            id: "s2",
+            artist: "B",
+            tags: &tags("pop"),
+            reward: 0.1,
+            context: &context,
+        });
+        assert_eq!(signals.consecutive_skips, 2);
+
+        // In recovery mode, high-affinity tracks get the anchor bonus
+        let mut long_term = Affinity::default();
+        long_term.tags.insert("ambient".to_string(), 2.0);
+        let session = Session::default();
+        let played_at = HashMap::new();
+        let recent_artists = HashSet::new();
+        let profile = Profile {
+            long_term: &long_term,
+            session: &session,
+            signals: &signals,
+            context: &context,
+            played_at: &played_at,
+            recent_artists: &recent_artists,
+            recent: &[],
+            last_primary: None,
+            explore: 0.2,
+        };
+
+        let mut rng = Lcg::new(42);
+        let candidate = track("c1", "Calm Song", "Zen", "ambient");
+        let scored = score(&profile, &candidate, &tags("ambient"), &mut rng);
+        assert!(
+            scored.reason.contains("recovery anchor"),
+            "expected recovery anchor in reason: {}",
+            scored.reason
+        );
+
+        // Successful completion resets skip streak
+        signals.observe_outcome(Outcome {
+            id: "c1",
+            artist: "Zen",
+            tags: &tags("ambient"),
+            reward: 1.0,
+            context: &context,
+        });
+        assert_eq!(signals.consecutive_skips, 0);
+    }
+
+    #[test]
+    fn energy_pacing_rewards_flow_and_penalizes_jarring_jumps() {
+        let signals = Signals::default();
+        let long_term = Affinity::default();
+        let session = Session::default();
+        let context = context_for(16, false);
+        let played_at = HashMap::new();
+        let recent_artists = HashSet::new();
+
+        let ambient_prev = track("prev", "Quiet Ambient Drone", "Sleepy", "ambient");
+        let recent_ambient = vec![ambient_prev];
+
+        let profile_after_ambient = Profile {
+            long_term: &long_term,
+            session: &session,
+            signals: &signals,
+            context: &context,
+            played_at: &played_at,
+            recent_artists: &recent_artists,
+            recent: &recent_ambient,
+            last_primary: None,
+            explore: 0.0,
+        };
+
+        let mut rng = Lcg::new(99);
+        let metal_cand = track("m1", "Thrash Metal Chaos", "Rocker", "metal");
+        let metal_tags = tags("metal");
+        let metal_scored = score(&profile_after_ambient, &metal_cand, &metal_tags, &mut rng);
+        assert!(
+            metal_scored.pacing < 0.0,
+            "jarring jump from ambient to metal should have negative pacing: {}",
+            metal_scored.pacing
+        );
+
+        let lofi_cand = track("l1", "Chill Lofi Beats", "Chiller", "lofi");
+        let lofi_tags = tags("lofi");
+        let lofi_scored = score(&profile_after_ambient, &lofi_cand, &lofi_tags, &mut rng);
+        assert!(
+            lofi_scored.pacing > 0.0,
+            "smooth flow from ambient to lofi should have positive pacing: {}",
+            lofi_scored.pacing
+        );
+    }
+
+    #[test]
+    fn quality_filter_catches_all_slop_variations() {
+        for title in [
+            "Song (slowed & reverb)",
+            "Song (slowed - reverb)",
+            "Song (slowed / reverb)",
+            "Song (slowed down)",
+            "Song (sped-up)",
+            "Song (8D Sound)",
+            "Song (Daycore)",
+            "Song (AI Vocal)",
+            "Song (10 hour loop)",
+            "Song (chopped & screwed)",
+        ] {
+            let candidate = track("x", title, "Someone", "pop");
+            assert!(
+                low_quality_reason(&candidate).is_some(),
+                "{title} should be recognized as slop"
+            );
+        }
     }
 }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.8 — 2026-11-17
+
+### Added
+
+- **Spotify-inspired recommendation enhancements:**
+  - **Energy & flow pacing:** Continuous energy scoring (`[-1.0, 1.0]`) that penalizes jarring jumps (`> 0.70`) and rewards smooth musical transitions (`≤ 0.35`).
+  - **Skip-streak recovery mode:** When consecutive quick skips reach 2+, exploration bonus is zeroed and an anchor bonus (`+0.28`) is granted to high-affinity tracks to guide the listener back to familiar taste territory.
+  - **Directed Markov transitions:** Records sequential track-to-track flow probabilities $P(B \mid A)$ to reward natural transitions.
+  - **Anchor-discovery batch rhythm:** Batch planning now enforces familiar anchor placement at slot 0 (and slot 3 for batches of 5+) so discovery candidates do not monopolize consecutive picks.
+  - **Edit token & slop filtering:** Expanded tokenization blacklist and low-quality regex screening for slowed, reverb, sped-up, nightcore, daycore, 8D, choppy/screwed and loop re-uploads.
+
+---
+
 ## 0.3.7 — 2026-11-17
 
 ### Added

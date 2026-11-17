@@ -100,24 +100,32 @@ impl Visualizer {
         for index in 0..BANDS {
             let target = target[index];
             let current = self.bands[index];
-            // Asymmetric spring: attack almost instantly, release slowly.
-            // That is the difference between "bars" and "music".
-            let stiffness = if target > current { 320.0 } else { 120.0 };
-            let damping = 26.0;
-            let accel = stiffness * (target - current) - damping * self.velocity[index];
-            self.velocity[index] = (self.velocity[index] + accel * dt).clamp(-6.0, 6.0);
-            let next = (current + self.velocity[index] * dt).clamp(0.0, MAX_LEVEL);
-            if target < 0.001 && next < 0.001 {
+            // Asymmetric spring: attack quickly, release with damped inertia.
+            // Using two sub-steps per frame prevents high-velocity overshoot
+            // and makes the bars feel organic, bouncy and buttery smooth.
+            let sub_dt = dt * 0.5;
+            let mut pos = current;
+            let mut vel = self.velocity[index];
+            for _ in 0..2 {
+                let stiffness = if target > pos { 340.0 } else { 130.0 };
+                let damping = 24.0;
+                let accel = stiffness * (target - pos) - damping * vel;
+                vel = (vel + accel * sub_dt).clamp(-8.0, 8.0);
+                pos = (pos + vel * sub_dt).clamp(0.0, MAX_LEVEL);
+            }
+            if target < 0.001 && pos < 0.001 {
                 self.velocity[index] = 0.0;
                 self.bands[index] = 0.0;
             } else {
-                self.bands[index] = next;
+                self.velocity[index] = vel;
+                self.bands[index] = pos;
             }
 
             if self.bands[index] >= self.peaks[index] {
                 self.peaks[index] = self.bands[index];
             } else {
-                self.peaks[index] = (self.peaks[index] - dt * 0.45).max(self.bands[index]);
+                let fall = (dt * 0.42).max(self.peaks[index] * dt * 0.95);
+                self.peaks[index] = (self.peaks[index] - fall).max(self.bands[index]);
             }
         }
 

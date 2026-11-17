@@ -13,7 +13,7 @@ use crate::config;
 use crate::ipc::{self, Connection};
 use crate::models::StreamInfo;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AudioSnapshot {
     pub position: f64,
     pub duration: f64,
@@ -23,6 +23,42 @@ pub struct AudioSnapshot {
     pub ended: bool,
     pub error: Option<String>,
     pub media_title: Option<String>,
+    pub updated_at: Instant,
+    pub speed: f64,
+}
+
+impl Default for AudioSnapshot {
+    fn default() -> Self {
+        Self {
+            position: 0.0,
+            duration: 0.0,
+            paused: false,
+            volume: 100.0,
+            idle: true,
+            ended: false,
+            error: None,
+            media_title: None,
+            updated_at: Instant::now(),
+            speed: 1.0,
+        }
+    }
+}
+
+impl AudioSnapshot {
+    /// Extrapolates current position based on elapsed time since the last mpv IPC
+    /// timestamp. Prevents progress bars and timers from jumping in discrete ~250ms steps.
+    pub fn live_position(&self) -> f64 {
+        if self.paused || self.idle || self.position <= 0.0 {
+            return self.position;
+        }
+        let elapsed = self.updated_at.elapsed().as_secs_f64() * self.speed;
+        let extrapolated = self.position + elapsed;
+        if self.duration > 0.0 {
+            extrapolated.min(self.duration)
+        } else {
+            extrapolated
+        }
+    }
 }
 
 pub struct AudioEngine {
@@ -142,7 +178,9 @@ impl AudioEngine {
     }
 
     pub fn snapshot(&self) -> AudioSnapshot {
-        self.snapshot.lock().map(|s| s.clone()).unwrap_or_default()
+        let mut s = self.snapshot.lock().map(|s| s.clone()).unwrap_or_default();
+        s.position = s.live_position();
+        s
     }
 
     pub fn take_ended(&self) -> bool {
@@ -173,6 +211,7 @@ impl AudioEngine {
             snapshot.error = None;
             snapshot.position = 0.0;
             snapshot.duration = 0.0;
+            snapshot.updated_at = Instant::now();
         }
         // yt-dlp negotiates headers (User-Agent, Referer, Sec-Fetch-*) that the
         // CDN expects. Without them direct googlevideo URLs intermittently 403.
@@ -214,6 +253,7 @@ impl AudioEngine {
         self.command(json!(["set_property", "pause", paused]))?;
         if let Ok(mut snapshot) = self.snapshot.lock() {
             snapshot.paused = paused;
+            snapshot.updated_at = Instant::now();
         }
         Ok(())
     }
@@ -227,6 +267,10 @@ impl AudioEngine {
     pub fn seek_absolute(&self, seconds: f64) -> Result<()> {
         let target = seconds.max(0.0);
         self.command(json!(["seek", target, "absolute"]))?;
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.position = target;
+            snapshot.updated_at = Instant::now();
+        }
         Ok(())
     }
 
@@ -252,6 +296,10 @@ impl AudioEngine {
             target
         };
         self.command(json!(["seek", target, "absolute"]))?;
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.position = target;
+            snapshot.updated_at = Instant::now();
+        }
         Ok(())
     }
 
@@ -266,7 +314,12 @@ impl AudioEngine {
 
     /// Playback speed (0.5×–2.0×). Great for podcasts and 10-hour mixes.
     pub fn set_speed(&self, speed: f64) -> Result<()> {
-        self.command(json!(["set_property", "speed", speed.clamp(0.25, 4.0)]))?;
+        let speed = speed.clamp(0.25, 4.0);
+        self.command(json!(["set_property", "speed", speed]))?;
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.speed = speed;
+            snapshot.updated_at = Instant::now();
+        }
         Ok(())
     }
 
@@ -499,9 +552,15 @@ fn read_events(stream: Connection, snapshot: Arc<Mutex<AudioSnapshot>>) {
                 let data = value.get("data").cloned().unwrap_or(Value::Null);
                 if let Ok(mut snapshot) = snapshot.lock() {
                     match name {
-                        "time-pos" => snapshot.position = data.as_f64().unwrap_or(0.0),
+                        "time-pos" => {
+                            snapshot.position = data.as_f64().unwrap_or(0.0);
+                            snapshot.updated_at = Instant::now();
+                        }
                         "duration" => snapshot.duration = data.as_f64().unwrap_or(0.0),
-                        "pause" => snapshot.paused = data.as_bool().unwrap_or(false),
+                        "pause" => {
+                            snapshot.paused = data.as_bool().unwrap_or(false);
+                            snapshot.updated_at = Instant::now();
+                        }
                         "volume" => snapshot.volume = data.as_f64().unwrap_or(0.0),
                         "idle-active" => snapshot.idle = data.as_bool().unwrap_or(false),
                         "media-title" => {

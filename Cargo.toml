@@ -1,6 +1,6 @@
 [package]
 name = "mfe-player"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2021"
 description = "Music For Everyone — a plugin-driven, terminal-native music player that tells subscriptions to get lost"
 license = "MIT"

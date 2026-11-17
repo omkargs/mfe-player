@@ -773,7 +773,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let cava_right = !app.spectrum_hidden
         && app.cava_enabled
-        && app.cava.is_some()
+        && app.side_panel_mode != crate::app::SidePanelMode::Off
         && app.config.cava_position.eq_ignore_ascii_case("right");
     let cava_width = if cava_right && area.width >= 96 {
         26
@@ -785,7 +785,7 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         0
     };
-    let cava_left = !app.spectrum_hidden && app.cava_enabled && cava_width == 0;
+    let cava_left = !app.spectrum_hidden && app.cava_enabled && app.side_panel_mode != crate::app::SidePanelMode::Off && cava_width == 0;
 
     // Narrow terminals get the list, not a 22-column sidebar glued to a
     // 16-column list. The number keys still switch views.
@@ -962,6 +962,7 @@ fn frequency_colour(position: f32, lift: f32) -> Color {
 }
 
 fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
+    use crate::app::SidePanelMode;
     // Alt+S removes the panel from the layout; this guard is belt-and-braces
     // for the narrow-terminal sidebar path.
     if app.spectrum_hidden {
@@ -970,6 +971,59 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
     if area.height < 3 || area.width < 6 {
         return;
     }
+
+    // In artwork mode, skip cava entirely and show the song cover.
+    if app.side_panel_mode == SidePanelMode::Artwork {
+        let paused = app.audio_snapshot().paused;
+        let title_label = if paused { " ▐ cover art ▌ " } else { " ▶ cover art ▌ " };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(th().border))
+            .title(Span::styled(title_label, Style::default().fg(th().accent2)))
+            .style(Style::default().bg(theme::panel()));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.height == 0 || inner.width == 0 {
+            return;
+        }
+
+        // Show artwork for the currently playing track.
+        let art = app.artwork.as_ref().filter(|_| {
+            app.now_playing
+                .as_ref()
+                .is_some_and(|t| app.artwork_track_id.as_deref() == Some(t.id.as_str()))
+        });
+
+        if let Some(art) = art {
+            draw_art(frame, art, inner);
+        } else if app.now_playing.is_some() {
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  loading cover art…",
+                        Style::default().fg(th().faint),
+                    )),
+                ])
+                .style(Style::default().bg(theme::panel())),
+                inner,
+            );
+        } else {
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    "  no track playing",
+                    Style::default().fg(th().faint),
+                ))
+                .style(Style::default().bg(theme::panel())),
+                inner,
+            );
+        }
+        return;
+    }
+
+    // Spectrum mode
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -1016,7 +1070,7 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(th().dim),
                 )),
                 Line::from(Span::styled(
-                    " Ctrl+V toggles ",
+                    " Ctrl+V cycles panel mode ",
                     Style::default().fg(th().faint),
                 )),
             ])
@@ -1035,7 +1089,7 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(th().yellow),
                 )),
                 Line::from(Span::styled(
-                    " Ctrl+V restarts it",
+                    " Ctrl+V to switch mode",
                     Style::default().fg(th().faint),
                 )),
             ])
@@ -1064,12 +1118,22 @@ fn draw_cava_panel(frame: &mut Frame, app: &App, area: Rect) {
     let paused = app.audio_snapshot().paused;
     let all_quiet = levels.iter().all(|level| *level < 0.01);
     if paused && all_quiet {
-        frame.render_widget(
-            Paragraph::new(Span::styled(" paused ", Style::default().fg(th().faint)))
-                .alignment(ratatui::layout::Alignment::Center)
-                .style(Style::default().bg(theme::panel())),
-            inner,
-        );
+        // Show artwork behind the "paused" label when available, else plain text.
+        let art = app.artwork.as_ref().filter(|_| {
+            app.now_playing
+                .as_ref()
+                .is_some_and(|t| app.artwork_track_id.as_deref() == Some(t.id.as_str()))
+        });
+        if let Some(art) = art {
+            draw_art(frame, art, inner);
+        } else {
+            frame.render_widget(
+                Paragraph::new(Span::styled(" paused ", Style::default().fg(th().faint)))
+                    .alignment(ratatui::layout::Alignment::Center)
+                    .style(Style::default().bg(theme::panel())),
+                inner,
+            );
+        }
         return;
     }
 
@@ -2382,21 +2446,27 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_art(frame: &mut Frame, art: &crate::artwork::Artwork, area: Rect) {
-    if area.width < 4 || area.height < 2 {
+    if area.width < 2 || area.height < 1 {
         return;
     }
-    let cell_h = area.height.min((area.width / 2).max(1));
-    let cell_w = (cell_h * 2).min(area.width);
-    let x_off = area.x + (area.width.saturating_sub(cell_w)) / 2;
-    let mut lines = Vec::with_capacity(cell_h as usize);
+    // A terminal halfblock cell is one column wide and two "pixels" tall.
+    // Fill the whole area: cell_w columns, cell_h rows, each row = 2 source pixels.
+    let cell_w = area.width as usize;
+    let cell_h = area.height as usize;
+
+    // Downscale once with Lanczos3 to the exact halfblock grid. This does the
+    // heavy lifting: every source pixel is blended with its neighbours, so the
+    // result is smooth and detailed rather than blocky nearest-neighbour mush.
+    let scaled = art.resized_lanczos(cell_w as u32, (cell_h * 2) as u32);
+
+    let mut lines = Vec::with_capacity(cell_h);
     for row in 0..cell_h {
-        let mut spans = Vec::with_capacity(cell_w as usize);
-        let y0 = ((row as f32 / cell_h as f32) * art.height as f32) as usize;
-        let y1 = (((row as f32 + 1.0) / cell_h as f32) * art.height as f32) as usize;
+        let mut spans = Vec::with_capacity(cell_w);
+        let top_y = row * 2;
+        let bot_y = row * 2 + 1;
         for col in 0..cell_w {
-            let x = ((col as f32 / cell_w as f32) * art.width as f32) as usize;
-            let top = art.pixel(x, y0.min(art.height - 1));
-            let bottom = art.pixel(x, y1.min(art.height - 1));
+            let top = scaled.pixel(col, top_y);
+            let bottom = scaled.pixel(col, bot_y);
             spans.push(Span::styled(
                 "▀",
                 Style::default()
@@ -2408,12 +2478,7 @@ fn draw_art(frame: &mut Frame, art: &crate::artwork::Artwork, area: Rect) {
     }
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme::panel())),
-        Rect {
-            x: x_off,
-            y: area.y,
-            width: cell_w,
-            height: cell_h,
-        },
+        area,
     );
 }
 
@@ -3005,7 +3070,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         key("Alt+F", "smart fade: 0 / 2 / 4 / 6 / 8 / 10 / 12 s (smooth S-curve)"),
         key("Alt+R", "replaygain: off / track / album for tagged files"),
         key("Alt+N", "toggle loudness normalisation"),
-        key("Ctrl+V", "toggle the cava spectrum panel"),
+        key("Ctrl+V", "side panel: spectrum → album art → off"),
         key("Alt+S", "hide / show the spectrum panel (no empty gutter)"),
         key("inspector", "album art loads automatically for the playing track"),
         key("Alt+T", "cycle colour theme (wallpaper = sample the desktop)"),

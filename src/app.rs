@@ -350,6 +350,23 @@ pub enum PaletteAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidePanelMode {
+    Spectrum,
+    Artwork,
+    Off,
+}
+
+impl SidePanelMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Spectrum => Self::Artwork,
+            Self::Artwork => Self::Off,
+            Self::Off => Self::Spectrum,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SmartRule {
     RecentlyAdded,
     NeverPlayed,
@@ -797,6 +814,7 @@ pub struct App {
     downloads_active: usize,
     pub cava: Option<Cava>,
     pub cava_enabled: bool,
+    pub side_panel_mode: SidePanelMode,
     /// Full-screen now-playing view (Alt+V).
     pub now_playing_fullscreen: bool,
     lyrics_pending: HashSet<String>,
@@ -1128,6 +1146,7 @@ impl App {
             downloads_active: 0,
             cava,
             cava_enabled,
+            side_panel_mode: if cava_enabled { SidePanelMode::Spectrum } else { SidePanelMode::Off },
             sleep: SleepMode::Off,
             eq: if persisted.eq != "flat" {
                 persisted.eq
@@ -3770,22 +3789,30 @@ impl App {
     }
 
     fn toggle_cava(&mut self) {
-        // If the panel is fully hidden, Ctrl+V brings it back instead of
-        // starting a second capture process.
         if self.spectrum_hidden {
             self.set_spectrum_hidden(false);
             return;
         }
-        if self.cava.is_some() {
-            self.cava = None;
-            self.cava_enabled = false;
-            self.flash("spectrum visualiser off · the audio engine keeps running");
-        } else {
-            self.cava = Some(Cava::spawn(self.config.cava_bars));
-            self.cava_enabled = true;
-            match self.cava.as_ref().and_then(Cava::error) {
-                Some(err) => self.flash(err.to_string()),
-                None => self.flash("spectrum visualiser on"),
+        self.side_panel_mode = self.side_panel_mode.next();
+        match self.side_panel_mode {
+            SidePanelMode::Spectrum => {
+                self.cava_enabled = true;
+                if self.cava.is_none() {
+                    self.cava = Some(Cava::spawn(self.config.cava_bars));
+                }
+                match self.cava.as_ref().and_then(Cava::error) {
+                    Some(err) => self.flash(err.to_string()),
+                    None => self.flash("side panel: spectrum visualiser"),
+                }
+            }
+            SidePanelMode::Artwork => {
+                self.cava_enabled = true;
+                self.flash("side panel: song album artwork (high quality)");
+            }
+            SidePanelMode::Off => {
+                self.cava_enabled = false;
+                self.cava = None;
+                self.flash("side panel off");
             }
         }
     }

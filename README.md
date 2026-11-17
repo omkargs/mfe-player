@@ -2,7 +2,7 @@
 
 <img src="assets/banner.svg" alt="MFE Player — Music For Everyone" width="100%">
 
-<img src="docs/demo.gif?v=3" alt="MFE Player in action — search, queue, spectrum, lyrics, detach to daemon" width="100%">
+<img src="docs/demo.gif?v=4" alt="MFE Player in action — search, queue, spectrum, lyrics, detach to daemon" width="100%">
 
 ### Music For Everyone.
 
@@ -16,7 +16,7 @@
 [![crates.io](https://img.shields.io/crates/v/mfe-player?color=ffa500)](https://crates.io/crates/mfe-player)
 [![npm](https://img.shields.io/npm/v/mfe-player?color=cb3837)](https://www.npmjs.com/package/mfe-player)
 
-[The rant](#-the-rant) · [Features](#-what-you-actually-get) · [Install](docs/INSTALL.md) · [Keys](docs/KEYS.md) · [Daemon](docs/DAEMON.md) · [Themes](docs/THEMES.md)
+[The rant](#the-reason-why-i-built-this) · [Who it's for](#made-for-people-who-live-in-the-terminal) · [Features](#-what-you-actually-get) · [Gallery](#-the-gallery) · [Install](docs/INSTALL.md) · [Keys](docs/KEYS.md) · [Ricing](docs/RICING.md)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/omkargs/mfe-player/master/install.sh | bash
@@ -38,7 +38,33 @@ Binary tarballs for Linux/macOS/Windows live on the [releases page](https://gith
 
 ---
 
-## The reason why i build this : 
+<p align="center">
+  <img src="docs/screenshots/01-library-spectrum.webp" alt="Library, fuzzy search and a live spectrum panel" width="48%">
+  <img src="docs/screenshots/02-now-playing.webp" alt="Now-playing popup with circular album art and transport controls" width="48%">
+</p>
+<p align="center">
+  <em>search · queue · spectrum · now playing — all in one 7 MB binary</em>
+</p>
+
+---
+
+## Made for people who live in the terminal
+
+You already spend ten hours a day in a terminal. Your editor is a terminal. Your git workflow is a terminal. Your dotfiles are a love language. The one place you *can't* hit space and hear a song is the place you live.
+
+MFE is for:
+
+- **The deep terminal dev** who wants `mfe next`, `mfe pause`, `mfe seek +10` wired into their keybindings and status bar, and who reads JSON from `mfe status --json` for fun.
+- **The rice enthusiast** whose Hyprland + waybar + kitty setup has a colour for everything, and who refuses to run an app that doesn't inherit their wallpaper palette.
+- **The person who needs a better life** — the one who just wants to press Enter, hear a song, and not be asked to sign in, pick a plan, watch an ad, or download an 80 MB "app" that is a web page in a trench coat.
+- **The SSH-in-a-tty-at-2am crowd**, where the daemon keeps playing after the connection drops because music shouldn't care about your tmux session.
+- **Anyone who thinks "music for everyone" should mean everyone.** No account, no telemetry, no region games. Just a search box and your music.
+
+If that's you, keep reading. If not, the install line is at the top and the MIT license is at the bottom. No gatekeeping.
+
+---
+
+## The reason why I built this
 
 I'm going to be honest with you: I built this because I got tired of being farmed.
 
@@ -139,10 +165,35 @@ MFE is the music player your Hyprland / yabai / GlazeWM setup was missing:
 
 - **Transparency that actually works** — `Alt+W` hands every background cell (base, panels, popups) back to your terminal, so kitty/Ghostty/WezTerm/Windows Terminal opacity and blur show the wallpaper. Works on Linux, macOS **and** Windows.
 - **60 fps in-process visualiser** — mel-spaced bands, asymmetric spring attack/release, peak hold, beat pulse and 1/8-cell block bars. `cava` only captures (PipeWire/PulseAudio, CoreAudio incl. the macOS 14.2+ output tap, WASAPI), so the spectrum finally moves with the frame rate instead of the poll timer.
+- **Smart fade up to 8s** — an equal-power S-curve ramps volume down over the last seconds of a track and back up over the first seconds of the next. `Alt+F` cycles 0 / 2 / 4 / 6 / 8 / 10 / 12 s.
+- **Ctrl+V side panel** — cycle the panel between the live spectrum and high-quality album artwork (Lanczos3-downscaled to the halfblock grid), or turn it off for wallpaper-only zen.
 - **Hide it when you want wallpaper only** — `Alt+S` removes the spectrum panel from the layout with no empty gutter. cava keeps running, so borders and gradients still pulse with the kick.
 - **A palette for every rice** — `synthwave`, `cyberpunk`, `oxocarbon`, `ayu-dark`, `monokai`, `midnight`, `catppuccin` (+ `catppuccin-latte`), `everforest`, `one-dark`, `tokyo-night`, `gruvbox`, `nord`, `dracula`, `kanagawa`, `rose-pine`, and `wallpaper`, which samples the image your compositor is actually showing. `Alt+T` cycles.
 - **Mini spectrum in your bar** — `mfe status --json` now carries `spectrum`, `pulse` and `energy`; [`contrib/mfe-spectrum.sh`](contrib/mfe-spectrum.sh) renders it as `▁▂▃▄▅▆▇█` for waybar, sketchybar, polybar or YASB without spawning a second cava.
 - **Recipes per desktop** — [docs/RICING.md](docs/RICING.md) has copy-paste configs for Hyprland + waybar, macOS + sketchybar, and the Windows stack (GlazeWM/Komorebi + YASB + Rainmeter + Windows Terminal).
+
+---
+
+## 📸 The gallery
+
+Real screenshots, real wallpapers, real rice. Click any image to see it full size.
+
+<table>
+  <tr>
+    <td align="center"><b>Library · search · live spectrum</b><br><img src="docs/screenshots/01-library-spectrum.webp" alt="Library, fuzzy search and a live spectrum panel" width="100%"></td>
+    <td align="center"><b>Now playing · circular album art</b><br><img src="docs/screenshots/02-now-playing.webp" alt="Now-playing popup with circular album art and transport controls" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Search · tokyo-night · browser wallpaper</b><br><img src="docs/screenshots/03-search-tokyo-night.webp" alt="Search view with the tokyo-night theme over a sunset wallpaper" width="100%"></td>
+    <td align="center"><b>Plugin store · mono theme</b><br><img src="docs/screenshots/04-plugins-mono.webp" alt="Plugin store view with the mono theme" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Equalizer · dracula theme</b><br><img src="docs/screenshots/05-equalizer-dracula.webp" alt="10-band equalizer popup with the dracula theme" width="100%"></td>
+    <td align="center"><b>Resolving · minimal transparency</b><br><img src="docs/screenshots/06-search-resolving.webp" alt="Search view resolving a track with a dark transparent wallpaper" width="100%"></td>
+  </tr>
+</table>
+
+> The terminal font, the wallpaper and the theme in those shots are all user-supplied — MFE just gets out of the way and inherits them. That's the whole aesthetic: **your setup, your rules, your music.**
 
 ---
 
@@ -161,7 +212,7 @@ MFE is the music player your Hyprland / yabai / GlazeWM setup was missing:
 └ / search · Enter play · a queue · F favorite · P playlist · ? help · Ctrl+P palette ┘
 ```
 
-Terminal font does the rest. It looks even better with a real cava panel on the right.
+Terminal font does the rest. It looks even better with a real cava panel on the right — see the [gallery](#-the-gallery).
 
 ---
 
@@ -177,7 +228,7 @@ Everything longer than a tweet lives in [docs/](docs/):
 | [Scripting](docs/SCRIPTING.md) | waybar/polybar/tmux JSON, one-liners |
 | [Ricing](docs/RICING.md) | Hyprland/waybar, macOS/sketchybar, GlazeWM/YASB, status-spectrum |
 | [Recommendations](docs/RECOMMENDATIONS.md) | the local Spotify-style stack, how to read and steer it |
-| [Themes](docs/THEMES.md) | 17 built-ins, wallpaper palettes, transparency |
+| [Themes](docs/THEMES.md) | 23 built-ins, wallpaper palettes, transparency |
 | [Plugins](docs/PLUGINS.md) | the Python JSON contract, bundled providers |
 | [Architecture](docs/ARCHITECTURE.md) | how the pieces talk to each other |
 | [Features](docs/FEATURES.md) | the complete feature table |

@@ -33,6 +33,34 @@ impl Artwork {
         let y = y.min(self.height.saturating_sub(1));
         self.pixels[y * self.width + x]
     }
+
+    /// Downscale to exactly `(width, height)` with a high-quality Lanczos3
+    /// filter. Terminal halfblocks map each cell to two vertical pixels, so
+    /// resizing the cover to the exact cell grid first gives crisp, clean art
+    /// with no blocky nearest-neighbour artifacts.
+    pub fn resized_lanczos(&self, width: u32, height: u32) -> Artwork {
+        let raw: Vec<u8> = self.pixels.iter().flatten().copied().collect();
+        let src = match image::RgbImage::from_raw(self.width as u32, self.height as u32, raw) {
+            Some(img) => img,
+            None => return self.clone(),
+        };
+        let out = image::imageops::resize(
+            &src,
+            width.max(1),
+            height.max(1),
+            image::imageops::FilterType::Lanczos3,
+        );
+        let (w, h) = out.dimensions();
+        let mut pixels = Vec::with_capacity((w * h) as usize);
+        for p in out.pixels() {
+            pixels.push([p[0], p[1], p[2]]);
+        }
+        Artwork {
+            width: w as usize,
+            height: h as usize,
+            pixels,
+        }
+    }
 }
 
 fn hash(input: &str) -> String {
@@ -208,8 +236,8 @@ pub fn load(url: &str) -> Result<Artwork> {
     let bytes = fs::read(&path).context("reading cached artwork")?;
     touch(&path);
     let image = decode(&bytes)?;
-    let image = if image.width() > 160 || image.height() > 160 {
-        image.thumbnail(160, 160)
+    let image = if image.width() > 320 || image.height() > 320 {
+        image.thumbnail(320, 320)
     } else {
         image
     }
@@ -267,6 +295,26 @@ mod tests {
         assert_eq!(evict(&dir, 4096), 0);
         assert!(dir.join("one").exists());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lanczos_resize_matches_target_grid() {
+        // A tiny 2x2 checkerboard resized to the halfblock grid must produce
+        // exactly the requested dimensions so draw_art can read it directly.
+        let art = Artwork {
+            width: 2,
+            height: 2,
+            pixels: vec![
+                [255, 0, 0],
+                [0, 255, 0],
+                [0, 0, 255],
+                [255, 255, 255],
+            ],
+        };
+        let scaled = art.resized_lanczos(8, 12);
+        assert_eq!(scaled.width, 8);
+        assert_eq!(scaled.height, 12);
+        assert_eq!(scaled.pixels.len(), 8 * 12);
     }
 
     #[test]

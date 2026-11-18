@@ -486,11 +486,6 @@ pub const PALETTE_ITEMS: &[PaletteItem] = &[
         action: PaletteAction::ToggleFavorite,
     },
     PaletteItem {
-        label: "Show lyrics",
-        hint: "y",
-        action: PaletteAction::ShowLyrics,
-    },
-    PaletteItem {
         label: "Full-screen now playing",
         hint: "Alt+V",
         action: PaletteAction::ShowNowPlaying,
@@ -1607,7 +1602,7 @@ impl App {
             KeyCode::Char('i') if self.view != View::Plugins => self.activate_selected(),
             KeyCode::Char('s') => self.toggle_shuffle(),
             KeyCode::Char('r') => self.cycle_repeat(),
-            KeyCode::Char('y') => self.open_lyrics(),
+            // Lyrics UI disabled (code kept for a future plugin-driven restore).
             KeyCode::Char('Y') => self.share_now_playing(),
             KeyCode::Char('F') => self.toggle_favorite(),
             KeyCode::Char('P') => self.begin_add_to_playlist(),

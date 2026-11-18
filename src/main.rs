@@ -1,3 +1,6 @@
+// Lyrics UI is disabled but its code path is intentionally kept for a future
+// restore, so dead-code warnings for those items are expected.
+#![allow(dead_code)]
 mod app;
 mod artwork;
 mod audio;
@@ -797,7 +800,7 @@ fn cli_action() -> CliAction {
                Space    play or pause (also starts a restored queue)\n\
                h        go back (artist/album page, open playlist)\n\
                Shift+←/→ seek −30s / +30s\n\
-               y        lyrics\n\
+               Alt+L    layout: full / focus / minimal\n\
                Ctrl+P   fzf-style command palette\n\
                Ctrl+B   quit the TUI, keep playing (repeat + queue keep running)\n\
                q        quit and stop audio",

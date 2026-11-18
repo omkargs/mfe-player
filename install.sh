@@ -46,54 +46,70 @@ step() {
 have() { command -v "$1" >/dev/null 2>&1; }
 dry()  { printf '  %s~%s would %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 
-# Arrow-key chooser used on Windows shells: Docker (recommended) or the
-# experimental native install. Falls back silently when stdin is not a tty.
-choose_windows_mode() {
-    WINDOWS_MODE="native"
-    [ -t 0 ] || { warn "not interactive - continuing with the native install"; return 0; }
-    if ! have docker; then
-        warn "docker not found - continuing with the native install"
+# Ask the user a yes/no question. Defaults to the given answer when stdin is
+# not a terminal (so `curl | bash` and CI never hang). Honours MFE_ASSUME_YES.
+confirm() {
+    local question="$1" default="${2:-yes}" answer
+    if [ "${MFE_ASSUME_YES:-0}" = 1 ]; then return 0; fi
+    if [ ! -t 0 ]; then
+        [ "$default" = yes ] && return 0 || return 1
+    fi
+    local hint="[Y/n]"
+    [ "$default" = no ] && hint="[y/N]"
+    printf '  %s%s%s %s' "$C_BOLD" "$question" "$C_RESET" "$hint"
+    IFS= read -r answer || true
+    case "${answer:-}" in
+        [Yy]*) return 0 ;;
+        [Nn]*) return 1 ;;
+        *) [ "$default" = yes ] && return 0 || return 1 ;;
+    esac
+}
+
+# Numeric chooser offered on every platform: native binary, Docker or Podman.
+# The container options only appear when their runtime is actually installed.
+# When stdin is not a terminal (curl | bash, CI) we quietly pick "native".
+RUN_MODE="native"
+choose_run_mode() {
+    RUN_MODE="native"
+    [ -t 0 ] || { skip "not interactive - using the native install"; return 0; }
+    [ "${MFE_ASSUME_YES:-0}" = 1 ] && { skip "assuming native (MFE_ASSUME_YES)"; return 0; }
+
+    local docker_ok=0 podman_ok=0
+    have docker && docker_ok=1
+    have podman && podman_ok=1
+    # On Linux without any container runtime there is nothing to choose.
+    if [ "$docker_ok" = 0 ] && [ "$podman_ok" = 0 ]; then
+        skip "no Docker/Podman runtime found - using the native install"
         return 0
     fi
-    printf '  %sHow do you want to run MFE?%s %s(↑/↓ + Enter)%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
-    local selected=0
-    local label0="Docker   - recommended: stable, runs in a container"
-    local label1="Native   - experimental: some features may not work"
-    local draw
-    draw() {
-        printf '  %s❯ %s%s\033[K\n' "$C_ACCENT" "$C_RESET" "$label0"
-        printf '    %s%s\033[K\n' "$C_DIM" "$label1"
-        printf '\033[2A'
-    }
-    draw
+
+    printf '\n  %sHow do you want to run MFE?%s\n' "$C_BOLD" "$C_RESET"
+    printf '    %s1%s  native binary   %s(fastest, uses your audio stack)%s\n' "$C_ACCENT" "$C_RESET" "$C_DIM" "$C_RESET"
+    [ "$docker_ok" = 1 ] && printf '    %s2%s  Docker          %s(containerised, stable)%s\n' "$C_ACCENT" "$C_RESET" "$C_DIM" "$C_RESET"
+    [ "$podman_ok" = 1 ] && printf '    %s3%s  Podman          %s(rootless container)%s\n' "$C_ACCENT" "$C_RESET" "$C_DIM" "$C_RESET"
+
+    local choice
     while true; do
-        local key
-        IFS= read -rsn1 key
-        case "$key" in
-            $'\x1b')
-                IFS= read -rsn2 key
-                case "$key" in
-                    '[A'|'D') selected=0 ;;
-                    '[B'|'C') selected=1 ;;
-                esac
-                ;;
-            '') break ;;
-            'j'|'[B') selected=1 ;;
-            'k'|'[A') selected=0 ;;
-            '1') selected=0; break ;;
-            '2') selected=1; break ;;
-            'q') printf '\n'; die "cancelled" ;;
+        printf '  %spick%s ' "$C_BOLD" "$C_RESET"
+        IFS= read -r choice || { warn "no input - using native"; return 0; }
+        case "$choice" in
+            1|native|n) RUN_MODE="native"; break ;;
+            2|docker|d)
+                if [ "$docker_ok" = 1 ]; then RUN_MODE="docker"; break; fi
+                warn "docker is not installed - pick another option" ;;
+            3|podman|p)
+                if [ "$podman_ok" = 1 ]; then RUN_MODE="podman"; break; fi
+                warn "podman is not installed - pick another option" ;;
+            q|Q) die "cancelled" ;;
+            *) warn "enter 1, 2, 3 or q" ;;
         esac
-        draw
     done
-    printf '\033[2B\033[K\033[B\033[K'
-    if [ "$selected" = 0 ]; then
-        WINDOWS_MODE="docker"
-        ok "Docker selected - the stable way to run MFE on Windows"
-    else
-        WINDOWS_MODE="native"
-        warn "Native selected - remember: experimental, some features may not work"
-    fi
+
+    case "$RUN_MODE" in
+        native) ok "native binary selected" ;;
+        docker) ok "Docker selected" ;;
+        podman) ok "Podman selected" ;;
+    esac
 }
 
 
@@ -279,10 +295,16 @@ install_dependency() {
     fi
 
     if [ -n "$PKG_MANAGER" ]; then
-        say "installing $tool ($purpose)"
-        if pkg_install "$tool"; then
-            ok "$tool"
-            return 0
+        # Installing system packages is intrusive: ask first (auto-yes with -y
+        # or when stdin is not a tty) and tell the user what will be used.
+        if confirm "install '$tool' for $purpose with $PKG_MANAGER?"; then
+            say "installing $tool ($purpose)"
+            if pkg_install "$tool"; then
+                ok "$tool"
+                return 0
+            fi
+        else
+            skip "declined installing $tool"
         fi
     fi
 
@@ -458,13 +480,21 @@ install_from_npm() {
     ok "installed with npm ($bin_dir)"
 }
 
-install_with_docker() {
-    step "Docker"
+install_with_container() {
+    local runtime="$1" label cmd
+    if [ "$runtime" = podman ]; then
+        label="Podman"
+        if have podman-compose; then cmd="podman-compose"; else cmd="podman compose"; fi
+    else
+        label="Docker"
+        cmd="docker compose"
+    fi
+    step "$label"
     if [ "$DRY_RUN" = 1 ]; then
-        dry "clone the repo into $SOURCE_DIR and run docker compose"
+        dry "clone the repo into $SOURCE_DIR and run $cmd"
         return 0
     fi
-    have git || { warn "git is required for the docker install"; return 1; }
+    have git || { warn "git is required for the $label install"; return 1; }
     say "fetching the compose files into $SOURCE_DIR"
     mkdir -p "$(dirname "$SOURCE_DIR")"
     if [ -d "$SOURCE_DIR/.git" ]; then
@@ -474,11 +504,22 @@ install_with_docker() {
         git clone --depth 1 "https://github.com/$REPO.git" "$SOURCE_DIR" >/dev/null 2>&1
     fi || { warn "could not fetch the repository"; return 1; }
     say "building the image (a few minutes the first time)"
-    ( cd "$SOURCE_DIR" && docker compose build ) || { warn "docker compose build failed"; return 1; }
+    ( cd "$SOURCE_DIR" && $cmd build ) || { warn "$label compose build failed"; return 1; }
     ok "image built and cached"
     printf '\n  %srun it with:%s\n' "$C_BOLD" "$C_RESET"
-    printf '    %scd %s && docker compose run --rm mfe%s\n' "$C_ACCENT" "$SOURCE_DIR" "$C_RESET"
+    printf '    %scd %s && %s run --rm mfe%s\n' "$C_ACCENT" "$SOURCE_DIR" "$cmd" "$C_RESET"
     return 0
+}
+
+# Ask before doing anything intrusive (package installs, container builds) when
+# a previous step failed. Keeps `curl | bash` safe by defaulting to "no".
+ask_continue() {
+    local what="$1"
+    if confirm "${what} failed - continue anyway?" no; then
+        warn "continuing despite the failure"
+        return 0
+    fi
+    return 1
 }
 
 install_mfe() {
@@ -495,7 +536,8 @@ install_mfe() {
     if [ "$FROM_SOURCE" = 0 ] && install_from_npm; then
         return 0
     fi
-    die "could not install mfe-player (release download, source build and npm all failed — see above)"
+    # Return failure (do not die) so main can offer the container fallback.
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -616,13 +658,21 @@ for arg in "$@"; do
         --deps-only) DEPS_ONLY=1 ;;
         --setup|--npm-setup) SETUP_ONLY=1 ;;
         --from-source|--source) FROM_SOURCE=1 ;;
+        --native)      MFE_RUN_MODE="native" ;;
+        --docker)      MFE_RUN_MODE="docker" ;;
+        --podman)      MFE_RUN_MODE="podman" ;;
+        -y|--yes)      MFE_ASSUME_YES=1 ;;
         -h|--help)
             printf 'mfe-player installer\n\n'
-            printf '  bash install.sh              install everything\n'
+            printf '  bash install.sh              install everything (asks native/Docker/Podman)\n'
+            printf '  bash install.sh --native     skip the prompt, install the native binary\n'
+            printf '  bash install.sh --docker     skip the prompt, run in Docker\n'
+            printf '  bash install.sh --podman     skip the prompt, run in Podman\n'
             printf '  bash install.sh --dry-run    show every phase, change nothing\n'
             printf '  bash install.sh --deps-only  install missing dependencies only\n'
             printf '  bash install.sh --setup      deps + completions + doctor (no binary)\n'
             printf '  bash install.sh --from-source  skip the release/npm lanes, build from git\n'
+            printf '  bash install.sh -y           assume yes for all prompts\n'
             exit 0
             ;;
         *) printf 'unknown option: %s (try --help)\n' "$arg" >&2; exit 2 ;;
@@ -652,26 +702,62 @@ if [ "$SETUP_ONLY" = 1 ]; then
     exit 0
 fi
 
-# Windows shells (Git Bash / MSYS): the native build is experimental, so warn
-# and let the user pick the Docker route with arrows.
+# Windows shells (Git Bash / MSYS): the native build is experimental.
 case "$OS" in
     MINGW*|MSYS*|CYGWIN*)
         step "Windows notice"
         warn "Windows is EXPERIMENTAL — some features may not work yet."
         say "audio, media keys and desktop integrations are best-effort."
-        say "the Docker build is the stable path on Windows."
-        choose_windows_mode
-        if [ "${WINDOWS_MODE:-native}" = "docker" ]; then
-            if install_with_docker; then
-                finish
-                exit 0
-            fi
-            die "docker install failed - fix docker, or re-run and choose Native"
-        fi
         ;;
 esac
 
-install_mfe
-install_completions
-run_doctor
-finish
+# Native install is ALWAYS the default. Containers are only a fallback used
+# when the native install fails. An explicit --docker/--podman (or MFE_RUN_MODE)
+# overrides that so the user can force a container directly.
+FORCED_MODE="${MFE_RUN_MODE:-}"
+
+# Pick which container runtime to offer as the fallback.
+fallback_runtime() {
+    have podman && { printf 'podman'; return; }
+    have podman-compose && { printf 'podman'; return; }
+    have docker && { printf 'docker'; return; }
+    printf ''
+}
+
+# 1) Forced container mode: go straight to the container.
+if [ "$FORCED_MODE" = docker ] || [ "$FORCED_MODE" = podman ]; then
+    if install_with_container "$FORCED_MODE"; then
+        install_completions
+        run_doctor
+        finish
+        exit 0
+    fi
+    if ask_continue "the $FORCED_MODE install"; then
+        warn "falling back to the native install"
+    else
+        die "$FORCED_MODE install failed - fix it, or re-run with --native"
+    fi
+fi
+
+# 2) Default path: try the native install first.
+if install_mfe; then
+    install_completions
+    run_doctor
+    finish
+    exit 0
+fi
+
+# 3) Native failed — offer a container as a fallback (with permission).
+warn "the native install did not complete"
+RUNTIME="$(fallback_runtime)"
+if [ -n "$RUNTIME" ] && confirm "try the $RUNTIME container install instead?"; then
+    if install_with_container "$RUNTIME"; then
+        install_completions
+        run_doctor
+        finish
+        exit 0
+    fi
+    warn "$RUNTIME container install also failed"
+fi
+
+die "could not install mfe-player natively (no working container fallback either — see above)"

@@ -11,7 +11,7 @@ use crate::app::{
     SLEEP_OPTIONS,
 };
 use crate::models::{
-    display_width, format_duration, format_position, parse_lyrics, truncate, Track,
+    display_width, format_duration, format_position, truncate, Track,
 };
 use crate::plugins::PluginKind;
 use crate::theme;
@@ -588,83 +588,9 @@ fn draw_now_playing(frame: &mut Frame, app: &mut App, area: Rect) {
         rows[5],
     );
 
-    // Lyrics: cached by the normal lyrics flow, fetched in the background when
-    // this view opens. The current synced line is highlighted.
-    let doc = app.lyrics_cache.get(&track.id);
-    let lines = doc.map(parse_lyrics).unwrap_or_default();
-    let source = doc
-        .map(|doc| doc.source.clone())
-        .unwrap_or_else(|| "fetching".to_string());
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            if lines.is_empty() {
-                format!(" lyrics · {source}")
-            } else {
-                format!(" lyrics · {source} · {} lines", lines.len())
-            },
-            Style::default().fg(th().faint),
-        ))
-        .style(Style::default().bg(theme::panel())),
-        rows[6],
-    );
-
-    if lines.is_empty() {
-        let message = if doc.is_some() {
-            "no lyrics for this track · press y for the lyrics popup"
-        } else {
-            "fetching lyrics in the background…"
-        };
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(""),
-                Line::from(Span::styled(message, Style::default().fg(th().dim))),
-            ])
-            .alignment(Alignment::Center)
-            .style(Style::default().bg(theme::panel())),
-            rows[7],
-        );
-        return;
-    }
-
-    // Lyrics follow mpv's exact reported position so lines change in rhythm;
-    // the progress bar above still uses the extrapolated snapshot for smoothness.
-    let position = app.reported_audio_snapshot().position;
-    let current = lines
-        .iter()
-        .enumerate()
-        .filter_map(|(index, line)| line.at.map(|at| (index, at)))
-        .take_while(|(_, at)| *at <= position + 0.2)
-        .last()
-        .map(|(index, _)| index)
-        .unwrap_or(0);
-    let height = rows[7].height.max(1) as usize;
-    let start = current
-        .saturating_sub(height / 2)
-        .min(lines.len().saturating_sub(height));
-    let visible: Vec<Line> = lines
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(height)
-        .map(|(index, line)| {
-            let style = if index == current {
-                Style::default()
-                    .fg(th().accent)
-                    .add_modifier(Modifier::BOLD)
-            } else if index < current {
-                Style::default().fg(th().faint)
-            } else {
-                Style::default().fg(th().dim)
-            };
-            Line::from(Span::styled(line.text.clone(), style))
-        })
-        .collect();
-    frame.render_widget(
-        Paragraph::new(visible)
-            .alignment(Alignment::Center)
-            .style(Style::default().bg(theme::panel())),
-        rows[7],
-    );
+    // Lyrics UI is disabled. The underlying code path (plugin, parse_lyrics,
+    // cache, Overlay::Lyrics) is kept intact for a future restore; only the
+    // on-screen rendering is turned off.
 }
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -2399,7 +2325,6 @@ fn draw_inspector(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(action_line("P", "add to playlist"));
     lines.push(action_line("d", "download offline"));
     lines.push(action_line("v", "mark for bulk actions"));
-    lines.push(action_line("y", "lyrics"));
     lines.push(action_line("Space", "pause / resume"));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -2934,7 +2859,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             "/ filter · Enter play · t now playing · J/K reorder · x remove · Alt+U undo · Alt+K clear upcoming · n/b skip · ?"
         }
         View::Favorites => {
-            "/ filter · Enter play · a queue · v mark · x remove · F favorite · y lyrics · z sleep · ? help"
+            "/ filter · Enter play · a queue · v mark · x remove · F favorite · z sleep · ? help"
         }
         View::Playlists => {
             if app.open_playlist.is_some() {
@@ -2956,7 +2881,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             "Enter play · a queue · A queue all · v mark · / filter · R rescan · 8 library · ? help"
         }
         View::Browse => {
-            "Esc/h back · Enter open/play · p play all · a/A queue · d download · v mark · N next · l like · y lyrics · R reload"
+            "Esc/h back · Enter open/play · p play all · a/A queue · d download · v mark · N next · l like · R reload"
         }
     };
     let cols =
@@ -3129,7 +3054,6 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         key("[ / ] · \\", "speed down / up · reset to 1×"),
         key("s · r", "shuffle · cycle repeat"),
         key("z", "sleep timer (15–90 min or end of track, fades out)"),
-        key("y", "lyrics overlay (synced when available)"),
         key("R", "reload / retry (page, search, plugins)"),
         key(
             "q / Ctrl+B",
@@ -3168,7 +3092,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         key("Alt+W", "transparent background (let the terminal show the wallpaper)"),
         key("Alt+A", "ambient tint (accent follows the current cover)"),
         key("Alt+M", "motion on / off (animations follow cava's energy)"),
-        key("Alt+V", "full-screen now playing (big art + karaoke lyrics)"),
+        key("Alt+V", "full-screen now playing (big art)"),
         key("Ctrl+P / :", "fzf command palette (every action)"),
         key("playerctl", "media keys control this player via MPRIS"),
         Line::from(""),
@@ -3682,8 +3606,11 @@ fn draw_confirm(frame: &mut Frame, message: &str, area: Rect) {
     );
 }
 
-fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect) {
-    let popup = centered(area, 82, 86);
+fn draw_lyrics(_frame: &mut Frame, _app: &App, _area: Rect) {
+    // Lyrics UI disabled; the renderer code below is kept for a future restore.
+    #[cfg(any())]
+    {
+    let popup = centered(_area, 82, 86);
     frame.render_widget(Clear, popup);
     let Some(Overlay::Lyrics(lyrics)) = app.overlay.as_ref() else {
         return;
@@ -3822,6 +3749,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect) {
             .wrap(Wrap { trim: false }),
         inner,
     );
+    }
 }
 
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]

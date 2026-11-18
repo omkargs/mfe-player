@@ -71,6 +71,39 @@ def lyrics_ovh(track):
     return None
 
 
+def estimate_synced(plain, duration):
+    """Turn plain lyrics into time-stamped LRC so highlighting still works.
+
+    LRCLIB (the synced source) is often slow or unreachable; lyrics.ovh only
+    returns plain text. Without timestamps the player can't highlight anything.
+    We spread the lines evenly across the track's duration, skipping short
+    intro/outro margins, so the karaoke view still follows the music.
+    """
+    if not plain:
+        return None
+    lines = [line.strip() for line in plain.replace("\r\n", "\n").split("\n")]
+    lines = [line for line in lines if line]
+    if not lines:
+        return None
+    try:
+        duration = float(duration or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    if duration <= 10:
+        duration = 200.0  # sensible default when the track length is unknown
+
+    lead_in = min(8.0, duration * 0.05)
+    usable = max(duration - lead_in - 4.0, duration * 0.6)
+    step = usable / len(lines)
+    out = []
+    for i, line in enumerate(lines):
+        at = lead_in + i * step
+        minutes = int(at // 60)
+        seconds = at - minutes * 60
+        out.append(f"[{minutes:02d}:{seconds:05.2f}]{line}")
+    return "\n".join(out)
+
+
 def main():
     if len(sys.argv) < 3 or sys.argv[1] != "fetch":
         fail("usage: main.py fetch '<track-json>'")
@@ -81,13 +114,15 @@ def main():
 
     item = lrclib(track)
     if item:
+        synced = item.get("syncedLyrics")
+        plain = item.get("plainLyrics")
+        # LRCLIB sometimes has only plain text — estimate timing so the
+        # karaoke view still highlights and scrolls.
+        if not synced and plain:
+            synced = estimate_synced(plain, track.get("duration"))
         print(
             json.dumps(
-                {
-                    "source": "lrclib",
-                    "plain": item.get("plainLyrics"),
-                    "synced": item.get("syncedLyrics"),
-                },
+                {"source": "lrclib", "plain": plain, "synced": synced},
                 ensure_ascii=False,
             )
         )
@@ -97,7 +132,11 @@ def main():
     if plain:
         print(
             json.dumps(
-                {"source": "lyrics.ovh", "plain": plain, "synced": None},
+                {
+                    "source": "lyrics.ovh",
+                    "plain": plain,
+                    "synced": estimate_synced(plain, track.get("duration")),
+                },
                 ensure_ascii=False,
             )
         )

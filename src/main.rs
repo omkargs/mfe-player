@@ -885,18 +885,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut app::App) ->
     let mut last_frame = Instant::now() - Duration::from_secs(1);
     let mut force_draw = true;
     while !app.should_quit {
-        let animating = app.animating();
-        let draw_interval = if animating {
-            Duration::from_millis(16)
-        } else {
-            Duration::from_millis(42)
-        };
+        let draw_interval = app.frame_interval();
         let remaining = draw_interval.saturating_sub(last_frame.elapsed());
-        let input_poll = if animating {
-            remaining.min(Duration::from_millis(6))
-        } else {
-            remaining.min(Duration::from_millis(20))
-        };
+        // Poll input for the whole remaining slice: a key press wakes us
+        // immediately, so slower redraws never make the UI feel laggy.
+        let input_poll = remaining.min(Duration::from_millis(20));
 
         if force_draw || last_frame.elapsed() >= draw_interval {
             force_draw = false;

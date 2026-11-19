@@ -953,6 +953,10 @@ pub struct App {
     /// Previous visualiser tick, used to integrate the springs with real time
     /// instead of assuming one frame = one fixed step.
     last_frame_at: Instant,
+    /// Wall-clock origin for time-based animation phase. Decoupling phase from
+    /// the frame counter lets the render loop slow down when idle without
+    /// making marquees and gradients crawl.
+    anim_epoch: Instant,
     /// Expensive OS integrations are polled on their own slower clocks so the
     /// 60 fps render loop never waits on D-Bus/SMTC/Discord bookkeeping.
     last_media_poll: Instant,
@@ -1266,6 +1270,7 @@ impl App {
             dirty_since: None,
             caches_pruned_at: Instant::now(),
             last_frame_at: Instant::now(),
+            anim_epoch: Instant::now(),
             last_media_poll: Instant::now() - Duration::from_secs(1),
             last_discord_poll: Instant::now() - Duration::from_secs(1),
         };
@@ -1341,10 +1346,12 @@ impl App {
         }
         self.check_sleep_timer();
         self.maybe_prime_radio();
-        if let Some(track) = self.now_playing.clone() {
-            let position = self.audio_snapshot().position;
-            self.scrobbler.tick(&track, position);
-            self.taste.progress(position);
+        // One snapshot per tick instead of three — each is a mutex lock + clone.
+        let tick_snapshot = self.audio_snapshot();
+        let tick_position = tick_snapshot.position;
+        if let Some(track) = self.now_playing.as_ref() {
+            self.scrobbler.tick(track, tick_position);
+            self.taste.progress(tick_position);
         }
         self.taste.flush_if_due();
         self.update_fade();
@@ -1356,7 +1363,7 @@ impl App {
             .unwrap_or(false);
         let audio_error = self.audio.as_ref().and_then(AudioEngine::take_error);
 
-        if self.audio_snapshot().position > 0.5 {
+        if tick_position > 0.5 {
             self.playback_failures = 0;
         }
 
@@ -6848,10 +6855,11 @@ impl App {
         self.discord.is_some()
     }
 
-    /// Monotonic animation phase. UI code uses it for gradients, marquees and
-    /// equaliser glyphs without keeping its own clock.
+    /// Monotonic animation phase in ~16 ms units (the old 60 fps frame unit).
+    /// Driven by wall time, not the frame counter, so marquees and gradients
+    /// move at the same speed whether the loop runs at 60 fps or 8 fps.
     pub fn phase(&self) -> usize {
-        self.spinner
+        (self.anim_epoch.elapsed().as_millis() / 16) as usize
     }
 
     /// 0.0 (idle) .. 1.0 (just changed track or a kick landed) pulse for the
@@ -6862,12 +6870,19 @@ impl App {
         flash.max(self.beat() * 0.85)
     }
 
-    /// True while something on screen is moving. The main loop uses this to
-    /// run at 60 fps during playback and drop to a calm 24 fps when idle.
+    /// True while something on screen needs a fast (60 fps) redraw: the live
+    /// spectrum during playback, or a short-lived spinner/flash/toast. A
+    /// paused/quiet session returns false so the loop can slow right down.
     pub fn animating(&self) -> bool {
         if self.should_quit {
             return false;
         }
+        // Short-lived animations always get the fast lane.
+        if self.track_flash > 0 || self.search_loading || self.resolving || self.toast.is_some() {
+            return true;
+        }
+        // A live spectrum only needs 60 fps when it is actually visible and
+        // moving. Hidden or motion-off sessions don't burn a core for nothing.
         let playing = self.now_playing.is_some()
             && !self
                 .audio
@@ -6875,11 +6890,33 @@ impl App {
                 .map(|audio| audio.snapshot().paused)
                 .unwrap_or(true);
         playing
-            || self.track_flash > 0
-            || self.search_loading
-            || self.resolving
-            || self.toast.is_some()
-            || self.config.motion
+            && self.config.motion
+            && self.cava_enabled
+            && !self.spectrum_hidden
+            && self.cava.as_ref().is_some_and(|c| c.running())
+    }
+
+    /// Redraw interval for the main loop. Three tiers keep CPU low: ~30 fps
+    /// while the spectrum is live, ~15 fps while playing quietly, ~4 fps idle.
+    /// A full-screen TUI redraw is expensive; 30 fps is visually smooth and
+    /// roughly halves the CPU of the old unconditional 60 fps loop.
+    pub fn frame_interval(&self) -> std::time::Duration {
+        use std::time::Duration;
+        if self.animating() {
+            Duration::from_millis(33)
+        } else {
+            let playing = self.now_playing.is_some()
+                && !self
+                    .audio
+                    .as_ref()
+                    .map(|audio| audio.snapshot().paused)
+                    .unwrap_or(true);
+            if playing {
+                Duration::from_millis(66)
+            } else {
+                Duration::from_millis(250)
+            }
+        }
     }
 
     pub fn spinner_char(&self) -> &'static str {

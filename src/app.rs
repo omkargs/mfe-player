@@ -6896,26 +6896,20 @@ impl App {
             && self.cava.as_ref().is_some_and(|c| c.running())
     }
 
-    /// Redraw interval for the main loop. Three tiers keep CPU low: ~30 fps
-    /// while the spectrum is live, ~15 fps while playing quietly, ~4 fps idle.
-    /// A full-screen TUI redraw is expensive; 30 fps is visually smooth and
-    /// roughly halves the CPU of the old unconditional 60 fps loop.
+    /// Redraw interval for the main loop.
+    ///
+    /// Motion is a steady ~30 fps: marquees, gradient sweeps and the breathing
+    /// glow are time-based, so they must be redrawn regularly or they look
+    /// frozen (most obvious right after a tab switch or a toast expires). 30 fps
+    /// is visually smooth and halves the CPU of the old unconditional 60 fps.
+    /// Only when the user explicitly turns motion off do we drop to a calm
+    /// 4 fps, since nothing on screen is meant to move then.
     pub fn frame_interval(&self) -> std::time::Duration {
         use std::time::Duration;
-        if self.animating() {
+        if self.config.motion || self.animating() {
             Duration::from_millis(33)
         } else {
-            let playing = self.now_playing.is_some()
-                && !self
-                    .audio
-                    .as_ref()
-                    .map(|audio| audio.snapshot().paused)
-                    .unwrap_or(true);
-            if playing {
-                Duration::from_millis(66)
-            } else {
-                Duration::from_millis(250)
-            }
+            Duration::from_millis(250)
         }
     }
 

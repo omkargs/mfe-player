@@ -14,12 +14,27 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::config;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Artwork {
     pub width: usize,
     pub height: usize,
     /// Row-major RGB pixels, already downscaled to a sane size.
     pub pixels: Vec<[u8; 3]>,
+    /// Cached high-quality resize keyed by (width, height). The terminal
+    /// redraws artwork every frame; without this, Lanczos3 would re-run on the
+    /// full cover 30x/second and stutter every tab switch.
+    resized_cache: std::sync::Mutex<Option<(u32, u32, Box<Artwork>)>>,
+}
+
+impl Clone for Artwork {
+    fn clone(&self) -> Self {
+        Self {
+            width: self.width,
+            height: self.height,
+            pixels: self.pixels.clone(),
+            resized_cache: std::sync::Mutex::new(None),
+        }
+    }
 }
 
 impl Artwork {
@@ -37,8 +52,19 @@ impl Artwork {
     /// Downscale to exactly `(width, height)` with a high-quality Lanczos3
     /// filter. Terminal halfblocks map each cell to two vertical pixels, so
     /// resizing the cover to the exact cell grid first gives crisp, clean art
-    /// with no blocky nearest-neighbour artifacts.
+    /// with no blocky nearest-neighbour artifacts. Results are cached by target
+    /// size so the 30 fps redraw loop doesn't re-resize the cover every frame.
     pub fn resized_lanczos(&self, width: u32, height: u32) -> Artwork {
+        let width = width.max(1);
+        let height = height.max(1);
+        if let Ok(cache) = self.resized_cache.lock() {
+            if let Some((w, h, art)) = cache.as_ref() {
+                if *w == width && *h == height {
+                    return (**art).clone();
+                }
+            }
+        }
+
         let raw: Vec<u8> = self.pixels.iter().flatten().copied().collect();
         let src = match image::RgbImage::from_raw(self.width as u32, self.height as u32, raw) {
             Some(img) => img,
@@ -46,8 +72,8 @@ impl Artwork {
         };
         let out = image::imageops::resize(
             &src,
-            width.max(1),
-            height.max(1),
+            width,
+            height,
             image::imageops::FilterType::Lanczos3,
         );
         let (w, h) = out.dimensions();
@@ -55,11 +81,16 @@ impl Artwork {
         for p in out.pixels() {
             pixels.push([p[0], p[1], p[2]]);
         }
-        Artwork {
+        let result = Artwork {
             width: w as usize,
             height: h as usize,
             pixels,
+            resized_cache: std::sync::Mutex::new(None),
+        };
+        if let Ok(mut cache) = self.resized_cache.lock() {
+            *cache = Some((width, height, Box::new(result.clone())));
         }
+        result
     }
 }
 
@@ -254,6 +285,7 @@ pub fn load(url: &str) -> Result<Artwork> {
         width: width as usize,
         height: height as usize,
         pixels,
+        resized_cache: std::sync::Mutex::new(None),
     })
 }
 
@@ -310,6 +342,7 @@ mod tests {
                 [0, 0, 255],
                 [255, 255, 255],
             ],
+            resized_cache: std::sync::Mutex::new(None),
         };
         let scaled = art.resized_lanczos(8, 12);
         assert_eq!(scaled.width, 8);

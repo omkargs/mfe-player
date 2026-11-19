@@ -39,9 +39,32 @@ pub fn palette_for(explicit: Option<&str>) -> Result<(PathBuf, Theme)> {
 }
 
 pub fn palette(path: &Path) -> Result<Theme> {
+    use std::fs;
+    use std::sync::Mutex;
+    use std::time::SystemTime;
+
+    // Decoding a full 4K wallpaper can stall the UI for a noticeable beat.
+    // Cache by path + mtime so cycling back to a wallpaper is instant and a
+    // changed file is picked up on the next call.
+    static CACHE: Mutex<Option<(PathBuf, SystemTime, Theme)>> = Mutex::new(None);
+    let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
+    if let Ok(cache) = CACHE.lock() {
+        if let Some((cached_path, cached_time, theme)) = cache.as_ref() {
+            if cached_path == path && modified.as_ref().is_some_and(|t| t == cached_time) {
+                return Ok(theme.clone());
+            }
+        }
+    }
+
     let image =
         image::open(path).with_context(|| format!("opening wallpaper {}", path.display()))?;
-    Ok(palette_from_rgb(&image.to_rgb8()))
+    let theme = palette_from_rgb(&image.to_rgb8());
+    if let Ok(mut cache) = CACHE.lock() {
+        if let Some(time) = modified {
+            *cache = Some((path.to_path_buf(), time, theme.clone()));
+        }
+    }
+    Ok(theme)
 }
 
 /// Build a palette from an image. Kept separate from file loading so it can be
